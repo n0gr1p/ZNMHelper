@@ -417,6 +417,8 @@ windower.register_event('ipc message', function(raw)
     local p = split(raw)
     if p[1] ~= 'ZNMH1' then return end
     if p[2] == 'QUERY' and settings.stages[p[3]] then
+        -- A delayed/out-of-stage QUERY must never reassign an active loot stage.
+        if loot_active and stage ~= p[3] then return end
         stage = p[3]
         local id = item_id(settings.stages[stage].pop)
         send('READY', stage, me(), id and owned_in_inventory(id) and '1' or '0')
@@ -445,10 +447,10 @@ windower.register_event('ipc message', function(raw)
         running, waiting, awaiting_ack, pending_stage = false, false, false, nil
         loot_active, claimed_owner, last_lotted = false, nil, {}
         pending_fresh_seen, pending_fresh_target = nil, nil
-    elseif p[2] == 'STAGE' then
+    elseif p[2] == 'STAGE' and settings.stages[p[3]] then
         stage = p[3]
-        claimed_owner = nil
-        last_lotted = {}
+        -- STAGE is configuration, not permission to lot. START must follow.
+        loot_active, claimed_owner, last_lotted = false, nil, {}
     elseif p[2] == 'CLAIM' and loot_active and stage == p[3] and settings.stages[p[3]] then
         claimed_owner = p[4]
         settings.stages[p[3]].recipient = p[4]
@@ -525,7 +527,11 @@ windower.register_event('addon command', function(cmd, ...)
         send('CONFIG', key, args[2])
         log('Trophy '..key..' assigned to '..args[2])
     elseif cmd == 'stage' and args[1] and settings.stages[args[1]:lower()] then
-        stage = args[1]:lower(); claimed_owner = nil; send('STAGE', stage); log('Stage '..stage)
+        if loot_active then return log('Stop the active ZNM run before changing stage') end
+        stage = args[1]:lower()
+        loot_active, claimed_owner, last_lotted = false, nil, {}
+        send('STAGE', stage)
+        log('Stage '..stage)
     elseif cmd == 'start' and args[1] then
         if me():lower() ~= settings.leader:lower() then return log('Start on leader only') end
         local key = args[1]:lower()
