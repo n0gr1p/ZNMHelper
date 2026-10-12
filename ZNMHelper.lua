@@ -141,7 +141,7 @@ local debug_header = 'time,character,event,stage,count,id,index,valid_target,sta
 local function debug_csv_value(value)
     if value == nil then return '' end
     local s = tostring(value)
-    if s:find('[,"\\r\\n]') then
+    if s:find('[,"]') or s:find(string.char(10), 1, true) or s:find(string.char(13), 1, true) then
         return '"'..s:gsub('"', '""')..'"'
     end
     return s
@@ -163,7 +163,7 @@ local function debug_open_file()
     end
     local size = file:seek('end')
     if size == 0 then
-        local written, write_err = file:write(debug_header..'\\n')
+        local written, write_err = file:write(debug_header..string.char(10))
         if not written then
             log('POP DEBUG ERROR: cannot write header: '..tostring(write_err))
             file:close()
@@ -220,7 +220,7 @@ local function debug_write_record(event, fields)
     row[#row+1] = awaiting_ack
     row[#row+1] = pending_stage or ''
     for i = 1, #row do row[i] = debug_csv_value(row[i]) end
-    local ok, err = debug_file:write(table.concat(row, ',')..'\\n')
+    local ok, err = debug_file:write(table.concat(row, ',')..string.char(10))
     if ok then ok, err = debug_file:flush() end
     if not ok then
         log('POP DEBUG ERROR: file write/flush failed: '..tostring(err)..'; stopping diagnostics')
