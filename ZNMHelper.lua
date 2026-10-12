@@ -37,7 +37,7 @@ local pending_fresh_seen, pending_fresh_target = nil, nil
 local awaiting_ack, selected_owner = false, nil
 local end_of_queue = false
 local peers, last_lotted = {}, {}
-local claimed_owner, session_leader = nil, nil
+local claimed_owner, session_leader, session_recipient_override = nil, nil, nil
 local claim_serial, received_claim_serial = 0, nil
 -- Followers do not set "running": they must explicitly receive START to enable
 -- loot handling, and STOP always disarms it, even if stage/recipient stay cached.
@@ -158,8 +158,8 @@ local function trophy_recipient(stage_key)
     -- files contain hardcoded recipients from the former one-off farming plan.
     -- No trophy is routed until this session identifies the actual popper.
     if not claimed_owner then return nil end
-    local override = settings.recipient_overrides[stage_key]
-    if override and override ~= '' and override:lower() ~= 'owner' then
+    local override = session_recipient_override or settings.recipient_overrides[stage_key]
+    if type(override) == 'string' and override ~= '' and override:lower() ~= 'owner' then
         return override
     end
     return claimed_owner
@@ -411,7 +411,7 @@ local function choose_owner()
 end
 local function stop(reason)
     running, waiting, seen_mob, awaiting_ack, pending_stage = false, false, false, false, nil
-    loot_active, claimed_owner, session_leader, last_lotted = false, nil, nil, {}
+    loot_active, claimed_owner, session_leader, session_recipient_override, last_lotted = false, nil, nil, nil, {}
     claim_serial, received_claim_serial = 0, nil
     pending_fresh_seen, pending_fresh_target = nil, nil
     if reason then log('STOP: '..reason) end
@@ -451,6 +451,8 @@ windower.register_event('ipc message', function(raw)
         lot_trophy()
     elseif p[2] == 'START' and settings.stages[p[3]] and p[4] and p[4] ~= '' then
         stage, session_leader = p[3], p[4]
+        -- Run initiator is authoritative for any explicit trophy override.
+        session_recipient_override = p[5] and p[5] ~= '' and p[5] or 'owner'
         loot_active, claimed_owner, last_lotted = true, nil, {}
         claim_serial, received_claim_serial = 0, nil
     elseif p[2] == 'READY' and running and p[3] == stage and p[4] ~= me() then
@@ -465,13 +467,13 @@ windower.register_event('ipc message', function(raw)
         stop('Pop failed on '..p[4]..': '..tostring(p[5]))
     elseif p[2] == 'STOP' then
         running, waiting, awaiting_ack, pending_stage = false, false, false, nil
-        loot_active, claimed_owner, session_leader, last_lotted = false, nil, nil, {}
+        loot_active, claimed_owner, session_leader, session_recipient_override, last_lotted = false, nil, nil, nil, {}
         claim_serial, received_claim_serial = 0, nil
         pending_fresh_seen, pending_fresh_target = nil, nil
     elseif p[2] == 'STAGE' and settings.stages[p[3]] then
         stage = p[3]
         -- STAGE is configuration, not permission to lot. START must follow.
-        loot_active, claimed_owner, last_lotted = false, nil, {}
+        loot_active, claimed_owner, session_leader, session_recipient_override, last_lotted = false, nil, nil, nil, {}
         claim_serial, received_claim_serial = 0, nil
     elseif p[2] == 'CLAIM' and loot_active and stage == p[3] and settings.stages[p[3]]
         and p[4] and p[4] ~= '' then
@@ -479,7 +481,8 @@ windower.register_event('ipc message', function(raw)
         if serial and received_claim_serial and serial < received_claim_serial then return end
         if claimed_owner ~= p[4] or received_claim_serial ~= serial then last_lotted = {} end
         claimed_owner, received_claim_serial = p[4], serial
-    elseif p[2] == 'CONFIG' and settings.stages[p[3]] and p[4] and p[4] ~= '' then
+    elseif p[2] == 'CONFIG' and not loot_active and settings.stages[p[3]]
+        and p[4] and p[4] ~= '' then
         settings.recipient_overrides[p[3]] = p[4]
         settings:save()
         last_lotted = {}
@@ -568,11 +571,12 @@ windower.register_event('addon command', function(cmd, ...)
         if not settings.stages[key] then return log('Unknown stage '..key) end
         stage, running, waiting, seen_mob, last_owner, peers, end_of_queue = key, true, false, false, '', {}, false
         claimed_owner, loot_active, session_leader = nil, true, me()
+        session_recipient_override = settings.recipient_overrides[key] or 'owner'
         claim_serial, received_claim_serial, last_lotted = 0, nil, {}
         awaiting_ack, selected_owner, pending_stage = false, nil, nil
         pending_fresh_seen, pending_fresh_target, last_pop_time = nil, nil, 0
         send('STAGE', stage)
-        send('START', stage, me())
+        send('START', stage, me(), session_recipient_override)
         broadcast_status()
         last_query = now()
         log('Armed '..key..'; collecting peer readiness (first pop in 3 seconds)')
@@ -582,7 +586,7 @@ windower.register_event('addon command', function(cmd, ...)
     elseif cmd == 'status' then
         log('stage='..tostring(stage)..' leader='..tostring(session_leader)..' restriction='..tostring(settings.leader)..' active='..tostring(running)..' loot_active='..tostring(loot_active)..' claimed_owner='..tostring(claimed_owner)..' waiting='..tostring(waiting)..' awaiting_trade='..tostring(awaiting_ack)..' local_retry='..tostring(pending_stage))
         if stage then
-            log('pop='..settings.stages[stage].pop..' trophy_recipient='..tostring(trophy_recipient(stage) or 'awaiting popper')..' override='..tostring(settings.recipient_overrides[stage] or 'owner'))
+            log('pop='..settings.stages[stage].pop..' trophy_recipient='..tostring(trophy_recipient(stage) or 'awaiting popper')..' override='..tostring(session_recipient_override or settings.recipient_overrides[stage] or 'owner'))
         end
     else log('Unknown command; //znmh help') end
 end)
