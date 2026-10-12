@@ -213,7 +213,10 @@ local function debug_write_record(event, fields)
     local row = {
         os.date('%Y-%m-%dT%H:%M:%S'), me() or '', event, stage or '',
     }
-    for index = 1, 13 do row[#row+1] = debug_csv_value(fields[index]) end
+    for index = 1, 13 do
+        local value = fields[index]
+        row[#row+1] = value == nil and '' or value
+    end
     row[#row+1] = running
     row[#row+1] = waiting
     row[#row+1] = seen_mob
@@ -436,7 +439,7 @@ windower.register_event('addon command', function(cmd, ...)
             if not debug_open_file() then return end
             pop_debug, debug_last_state, debug_last_poll = true, nil, now()
             local state, fields = debug_pop_snapshot()
-            debug_write_record('START', fields)
+            if not debug_write_record('START', fields) then return end
             debug_last_state = state
             log('POP DEBUG writing 1Hz CSV to '..debug_file_path)
         elseif option == 'off' then
