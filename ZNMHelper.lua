@@ -35,6 +35,9 @@ local end_of_queue = false
 local peers, last_lotted = {}, {}
 local owner_lot = {chigre=true, verdelet=true, lamia=true, mahjlaef=true, nuhn=true}
 local claimed_owner = nil
+-- Followers do not set "running": they must explicitly receive START to enable
+-- loot handling, and STOP always disarms it, even if stage/recipient stay cached.
+local loot_active = false
 -- Allow time for the NM and treasure pool to settle before assigning another
 -- popper. Respawn readiness is checked on the selected popper, not timed here.
 local delay_after_kill = 12
@@ -109,7 +112,7 @@ local function has_treasure(item_name)
     return false
 end
 local function lot_trophy()
-    if not stage or not settings.stages[stage] then return end
+    if not loot_active or not stage or not settings.stages[stage] then return end
     local cfg = settings.stages[stage]
     if not cfg.trophy or cfg.trophy == '' then return end
     local recipient = owner_lot[stage] and claimed_owner or cfg.recipient
@@ -347,6 +350,7 @@ local function choose_owner()
 end
 local function stop(reason)
     running, waiting, seen_mob, awaiting_ack, pending_stage = false, false, false, false, nil
+    loot_active, claimed_owner, last_lotted = false, nil, {}
     pending_fresh_seen, pending_fresh_target = nil, nil
     if reason then log('STOP: '..reason) end
     send('STOP')
@@ -380,9 +384,12 @@ windower.register_event('ipc message', function(raw)
             send('CLAIM', stage, claimed_owner)
         end
         lot_trophy()
+    elseif p[2] == 'START' and settings.stages[p[3]] then
+        stage = p[3]
+        loot_active, claimed_owner, last_lotted = true, nil, {}
     elseif p[2] == 'READY' and running and p[3] == stage and p[4] ~= me() then
         peers[p[4]] = {ready = p[5] == '1', time = now()}
-    elseif p[2] == 'POP' and p[4] == me() then
+    elseif p[2] == 'POP' and p[4] == me() and loot_active and p[3] == stage then
         stage = p[3]
         if owner_lot[stage] then
             claimed_owner = me()
@@ -396,13 +403,13 @@ windower.register_event('ipc message', function(raw)
         stop('Pop failed on '..p[4]..': '..tostring(p[5]))
     elseif p[2] == 'STOP' then
         running, waiting, awaiting_ack, pending_stage = false, false, false, nil
+        loot_active, claimed_owner, last_lotted = false, nil, {}
         pending_fresh_seen, pending_fresh_target = nil, nil
     elseif p[2] == 'STAGE' then
         stage = p[3]
         claimed_owner = nil
         last_lotted = {}
-    elseif p[2] == 'CLAIM' and settings.stages[p[3]] then
-        stage = p[3]
+    elseif p[2] == 'CLAIM' and loot_active and stage == p[3] and settings.stages[p[3]] then
         claimed_owner = p[4]
         settings.stages[p[3]].recipient = p[4]
         last_lotted = {}
@@ -484,10 +491,11 @@ windower.register_event('addon command', function(cmd, ...)
         local key = args[1]:lower()
         if not settings.stages[key] then return log('Unknown stage '..key) end
         stage, running, waiting, seen_mob, last_owner, peers, end_of_queue = key, true, false, false, '', {}, false
-        claimed_owner = nil
+        claimed_owner, loot_active = nil, true
         awaiting_ack, selected_owner, pending_stage = false, nil, nil
         pending_fresh_seen, pending_fresh_target, last_pop_time = nil, nil, 0
         send('STAGE', stage)
+        send('START', stage)
         broadcast_status()
         last_query = now()
         log('Armed '..key..'; collecting peer readiness (first pop in 3 seconds)')
@@ -495,7 +503,7 @@ windower.register_event('addon command', function(cmd, ...)
     elseif cmd == 'stop' then
         stop('manual stop')
     elseif cmd == 'status' then
-        log('stage='..tostring(stage)..' leader='..settings.leader..' active='..tostring(running)..' waiting='..tostring(waiting)..' awaiting_trade='..tostring(awaiting_ack)..' local_retry='..tostring(pending_stage))
+        log('stage='..tostring(stage)..' leader='..settings.leader..' active='..tostring(running)..' loot_active='..tostring(loot_active)..' claimed_owner='..tostring(claimed_owner)..' waiting='..tostring(waiting)..' awaiting_trade='..tostring(awaiting_ack)..' local_retry='..tostring(pending_stage))
         if stage then log('pop='..settings.stages[stage].pop..' recipient='..tostring(settings.stages[stage].recipient)) end
     else log('Unknown command; //znmh help') end
 end)
