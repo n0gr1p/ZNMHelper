@@ -47,6 +47,20 @@ Set on leader, and broadcast to all clients:
 
 For Chigre, Verdelet, Experimental Lamia, Mahjlaef and Nuhn, the current pop *owner* is designated trophy recipient automatically. The addon tracks that owner explicitly, reapplies the owner assignment to peers during readiness queries, and scans treasure slots 0–9 for automatic lot/pass. If no owner has been assigned yet, it does not pass these trophies. The other characters pass only the configured trophy, and the designated character lots it. One Rare/Ex trophy per owner per wave; turn it in to Sanraku before continuing a repeat wave. The addon does **not** trade trophies to Sanraku.
 
+**Automatic lotting is enabled only during an explicitly started ZNM run.** The leader broadcasts `START` to arm each client; `//znmh stop` broadcasts `STOP`, clearing the session loot flag and stale owner assignment on every client. Merely setting the stage or receiving readiness queries cannot activate lotting, and changing the stage during an active run is refused.
+
+**Fixed-recipient stages are different from owner stages:** Vulpangue, Iriz Ima, Armed Gears, Gotoh Zha, and Dea are currently configured to lot their trophies to **Etamame even if Etamame has no pop item**. Those defaults remain unchanged. Experimental Lamia's armband is owner-routed, so Etamame should not receive a ZNMHelper lot request for it unless Etamame is the assigned popper.
+
+### Persistent loot-decision audit
+
+Every automatic `lot_item` or `pass_item` request is recorded in a per-character daily CSV file:
+
+```text
+Windower4/addons/ZNMHelper/data/ZNMHelper_loot_<Character>_YYYYMMDD.csv
+```
+
+Each row records timestamp, character, requested action (`REQUEST_LOT` or `REQUEST_PASS`), stage, trophy, recipient, claimed owner, treasure slot, and active-session state. These are records of *requested actions*, not proof that the game awarded the trophy. If Etamame appears to be lotting something unexpected, compare Etamame's file with the actual treasure-pool item.
+
 For Tyger, choose one Mythic recipient before each kill, or stop the queue between recipients. **Do not spawn the three trial Tyger pops before the Magian trial is active.**
 
 ## Known stage aliases
