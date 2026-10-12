@@ -111,6 +111,44 @@ local function has_treasure(item_name)
     end
     return false
 end
+-- Persist automatic loot decisions independently of the optional pop-debug log.
+-- Entries describe commands issued, not proof that the game accepted the lot.
+local loot_audit_error_reported = false
+local function audit_loot_request(action, trophy, recipient, slot)
+    local player_name = tostring(me() or 'Unknown'):gsub('[^%w_-]', '_')
+    local path = windower.addon_path..'data/ZNMHelper_loot_'..player_name..'_'..os.date('%Y%m%d')..'.csv'
+    local file, err = io.open(path, 'a+')
+    if not file then
+        if not loot_audit_error_reported then
+            log('LOOT AUDIT ERROR: '..tostring(err))
+            loot_audit_error_reported = true
+        end
+        return
+    end
+    local function csv_cell(value)
+        local value_text = tostring(value or '')
+        if value_text:find('[,"]') or value_text:find(string.char(10), 1, true)
+            or value_text:find(string.char(13), 1, true) then
+            return '"'..value_text:gsub('"', '""')..'"'
+        end
+        return value_text
+    end
+    local ok, write_err = pcall(function()
+        if file:seek('end') == 0 then
+            assert(file:write('time,character,action,stage,trophy,recipient,claimed_owner,slot,loot_active'..string.char(10)))
+        end
+        local fields = {os.date('%Y-%m-%dT%H:%M:%S'), me() or '', action,
+            stage or '', trophy or '', recipient or '', claimed_owner or '', slot, loot_active}
+        for i = 1, #fields do fields[i] = csv_cell(fields[i]) end
+        assert(file:write(table.concat(fields, ',')..string.char(10)))
+        assert(file:flush())
+    end)
+    file:close()
+    if not ok and not loot_audit_error_reported then
+        log('LOOT AUDIT ERROR: '..tostring(write_err))
+        loot_audit_error_reported = true
+    end
+end
 local function lot_trophy()
     if not loot_active or not stage or not settings.stages[stage] then return end
     local cfg = settings.stages[stage]
@@ -127,9 +165,11 @@ local function lot_trophy()
             if not last_lotted[fingerprint] then
                 last_lotted[fingerprint] = true
                 if me():lower() == recipient:lower() then
+                    audit_loot_request('REQUEST_LOT', cfg.trophy, recipient, slot)
                     windower.ffxi.lot_item(slot)
                     log('Lotting '..cfg.trophy..' for '..me())
                 else
+                    audit_loot_request('REQUEST_PASS', cfg.trophy, recipient, slot)
                     windower.ffxi.pass_item(slot)
                 end
             end
