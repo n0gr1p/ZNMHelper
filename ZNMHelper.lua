@@ -44,9 +44,9 @@ local max_spawn_wait = 25
 local target_range = 6
 -- Debug observations are local to each client and never trigger a target or trade.
 local pop_debug = false
-local debug_last_poll, debug_last_snapshot = 0, 0
+local debug_last_poll = 0
 local debug_last_state = nil
-local debug_last_identity = nil
+local debug_file, debug_file_path = nil, nil
 
 local function now() return os.time() end
 local function me()
@@ -133,9 +133,56 @@ local function lot_trophy()
         end
     end
 end
+-- Keep the diagnostic stream separate from game chat. CSV is per character and
+-- append-only; flush after every record so a client crash loses at most an
+-- in-flight sample. Sampling is bounded to once per second.
+local debug_header = 'time,character,event,stage,count,id,index,valid_target,status,spawn_type,target_type,hpp,is_npc,distance_sq,x,y,z,running,waiting,seen_nm,awaiting_ack,pending_stage'
+
+local function debug_csv_value(value)
+    if value == nil then return '' end
+    local s = tostring(value)
+    if s:find('[,"\\r\\n]') then
+        return '"'..s:gsub('"', '""')..'"'
+    end
+    return s
+end
+
+local function debug_close_file()
+    if debug_file then pcall(function() debug_file:flush(); debug_file:close() end) end
+    debug_file = nil
+end
+
+local function debug_open_file()
+    if debug_file then return true end
+    local name = tostring(me() or 'Unknown'):gsub('[^%w_-]', '_')
+    local path = windower.addon_path..'data/ZNMHelper_pop_'..name..'_'..os.date('%Y%m%d')..'.csv'
+    local file, err = io.open(path, 'a+')
+    if not file then
+        log('POP DEBUG ERROR: cannot open file: '..tostring(err))
+        return false
+    end
+    local size = file:seek('end')
+    if size == 0 then
+        local written, write_err = file:write(debug_header..'\\n')
+        if not written then
+            log('POP DEBUG ERROR: cannot write header: '..tostring(write_err))
+            file:close()
+            return false
+        end
+    end
+    local flushed, flush_err = file:flush()
+    if not flushed then
+        log('POP DEBUG ERROR: cannot flush header: '..tostring(flush_err))
+        file:close()
+        return false
+    end
+    debug_file, debug_file_path = file, path
+    return true
+end
+
 local function debug_pop_snapshot()
     local nearest, count = nil, 0
-    -- Inspect raw entities even when they are not currently valid targets.
+    -- get_mob_array does not require any character to select the ???.
     for _, mob in pairs(windower.ffxi.get_mob_array() or {}) do
         if mob and mob.name == '???' and mob.distance
             and mob.distance <= target_range * target_range then
@@ -143,37 +190,58 @@ local function debug_pop_snapshot()
             if not nearest or mob.distance < nearest.distance then nearest = mob end
         end
     end
-    if not nearest then return 'none', 'nearby ???=none' end
-    local v = nearest.valid_target
-    local ident = tostring(nearest.id)..'/'..tostring(nearest.index)
+    if not nearest then return 'none', {0} end
+    local fields = {
+        count, nearest.id, nearest.index, nearest.valid_target,
+        nearest.status, nearest.spawn_type, nearest.target_type,
+        nearest.hpp, nearest.is_npc, nearest.distance,
+        nearest.x, nearest.y, nearest.z,
+    }
+    -- Include identity and all readiness-like flags, but ignore coordinate
+    -- jitter when determining whether a state actually changed.
     local state = table.concat({
-        tostring(count), ident, tostring(v), tostring(nearest.status),
+        tostring(count), tostring(nearest.id), tostring(nearest.index),
+        tostring(nearest.valid_target), tostring(nearest.status),
         tostring(nearest.spawn_type), tostring(nearest.target_type),
         tostring(nearest.hpp), tostring(nearest.is_npc)
     }, '|')
-    local detail = string.format(
-        'nearby ??? count=%d id=%s index=%s valid_target=%s status=%s spawn_type=%s target_type=%s hpp=%s is_npc=%s distance_sq=%.2f x=%s y=%s z=%s',
-        count, tostring(nearest.id), tostring(nearest.index), tostring(v),
-        tostring(nearest.status), tostring(nearest.spawn_type),
-        tostring(nearest.target_type), tostring(nearest.hpp),
-        tostring(nearest.is_npc), nearest.distance,
-        tostring(nearest.x), tostring(nearest.y), tostring(nearest.z))
-    return state, detail, ident
+    return state, fields
+end
+
+local function debug_write_record(event, fields)
+    if not debug_open_file() then pop_debug = false; return false end
+    local row = {
+        os.date('%Y-%m-%dT%H:%M:%S'), me() or '', event, stage or '',
+    }
+    for index = 1, 13 do row[#row+1] = fields[index] end
+    row[#row+1] = running
+    row[#row+1] = waiting
+    row[#row+1] = seen_mob
+    row[#row+1] = awaiting_ack
+    row[#row+1] = pending_stage or ''
+    for i = 1, #row do row[i] = debug_csv_value(row[i]) end
+    local ok, err = debug_file:write(table.concat(row, ',')..'\\n')
+    if ok then ok, err = debug_file:flush() end
+    if not ok then
+        log('POP DEBUG ERROR: file write/flush failed: '..tostring(err)..'; stopping diagnostics')
+        pop_debug = false
+        debug_close_file()
+        return false
+    end
+    return true
 end
 
 local function debug_pop_tick()
     if not pop_debug or now() == debug_last_poll then return end
     debug_last_poll = now()
-    local state, detail, ident = debug_pop_snapshot()
-    if state ~= debug_last_state then
-        log('POP DEBUG CHANGE '..detail)
-        debug_last_state, debug_last_identity = state, ident
-        debug_last_snapshot = now()
-    elseif now() - debug_last_snapshot >= 30 then
-        log('POP DEBUG SNAPSHOT '..detail)
-        debug_last_snapshot = now()
-    end
+    local state, fields = debug_pop_snapshot()
+    local event = state ~= debug_last_state and 'CHANGE' or 'SAMPLE'
+    if debug_write_record(event, fields) then debug_last_state = state end
 end
+
+windower.register_event('unload', function()
+    debug_close_file()
+end)
 
 local function guarded_pop(requested_stage)
     local cfg = settings.stages[requested_stage]
@@ -360,22 +428,29 @@ windower.register_event('addon command', function(cmd, ...)
         log('setup: //znmh leader Niightsiide (on each client); //znmh stage chigre')
         log('loot: //znmh recipient chigre Nyoourke (broadcasts recipient for this stage)')
         log('start: //znmh start chigre (leader only); //znmh stop; //znmh status')
-        log('diagnostic: //znmh debugpop on|off|once (on logs changes and 30s snapshots)')
+        log('diagnostic: //znmh debugpop on|off|once (per-character 1Hz CSV file)')
         log('Pop owners must be near one unambiguous ??? and keep pops in main Inventory.')
     elseif cmd == 'debugpop' then
         local option = (args[1] or 'once'):lower()
         if option == 'on' then
+            if not debug_open_file() then return end
             pop_debug, debug_last_state, debug_last_poll = true, nil, 0
-            log('POP DEBUG enabled on '..tostring(me())..' (local client only)')
-            local state, detail = debug_pop_snapshot()
-            log('POP DEBUG INITIAL '..detail)
-            debug_last_state, debug_last_snapshot = state, now()
+            log('POP DEBUG writing 1Hz CSV to '..debug_file_path)
+            debug_pop_tick()
         elseif option == 'off' then
             pop_debug = false
-            log('POP DEBUG disabled')
+            if debug_file then
+                local _, fields = debug_pop_snapshot()
+                debug_write_record('STOP', fields)
+                debug_close_file()
+            end
+            log('POP DEBUG stopped; file: '..tostring(debug_file_path))
         elseif option == 'once' then
-            local _, detail = debug_pop_snapshot()
-            log('POP DEBUG ONCE '..detail)
+            local _, fields = debug_pop_snapshot()
+            if debug_write_record('MANUAL', fields) then
+                log('POP DEBUG snapshot written to '..debug_file_path)
+            end
+            if not pop_debug then debug_close_file() end
         else
             log('Usage: //znmh debugpop on|off|once')
         end
