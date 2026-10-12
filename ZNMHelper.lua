@@ -35,7 +35,9 @@ local end_of_queue = false
 local peers, last_lotted = {}, {}
 local owner_lot = {chigre=true, verdelet=true, lamia=true, mahjlaef=true, nuhn=true}
 local claimed_owner = nil
-local delay_after_kill = 12
+-- ZNM ??? has a three-minute respawn cooldown; start the next owner's
+-- 20-second fresh-pop safety wait only after this minimum has elapsed.
+local delay_after_kill = 180
 local retry_interval = 2
 local fresh_pop_delay = 20
 local max_spawn_wait = 25
