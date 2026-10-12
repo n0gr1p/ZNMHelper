@@ -11,10 +11,10 @@ Copy the repository folder to `Windower4/addons/ZNMHelper` on **every client** a
 1. On each client: `//znmh leader Niightsiide` (or choose another leader).
 2. Move the correct ZNM pop into **main Inventory** on every character that should pop.
 3. Park **each participating character** within range of the correct ???. No manual target selection is required. The addon resolves the nearby ??? directly and refuses an ambiguous location with multiple ??? entities in range.
-4. On the leader only: `//znmh start chigre`. The leader queries clients, chooses one holder, asks it to trade its item, waits until the named NM appears and then disappears, checks for unresolved trophy in treasure pool, and (after 12 seconds) selects another holder.
+4. On the leader only: `//znmh start chigre`. The leader queries clients, chooses one holder, asks it to trade its item, waits until the named NM appears and then disappears, checks for unresolved trophy in treasure pool, and (after 12 seconds) selects another holder. That holder retries every 2 seconds while the ??? is absent or the character is busy; the 25-second NM-spawn timeout begins only after a trade packet is sent.
 5. `//znmh status`; `//znmh stop` at any time.
 
-**Do not leave it unattended.** If the mob does not appear within 25 seconds of the attempted trade, it stops. Failure to pop correctly can require manual intervention. It cannot verify the actual event completion, ownership of seals, or NPC menu outcomes.
+**Do not leave it unattended.** If the mob does not appear within 25 seconds after sending a trade packet, it stops. An absent ??? does not start this timeout and is retried automatically. This does not yet confirm server acceptance of a trade packet; an entity remaining in memory while unavailable may still cause a premature attempt. Failure to pop correctly can require manual intervention. It cannot verify the actual event completion, ownership of seals, or NPC menu outcomes.
 
 ## Loot routing
 

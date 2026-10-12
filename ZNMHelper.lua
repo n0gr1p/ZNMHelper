@@ -28,10 +28,13 @@ local defaults = {
 local settings = config.load(defaults)
 local running, stage, waiting, seen_mob, last_owner = false, nil, false, false, ''
 local last_pop_time, last_seen_time, last_query = 0, 0, 0
+local pending_stage, pending_retry_at, last_pending_log = nil, 0, 0
+local awaiting_ack, selected_owner = false, nil
 local end_of_queue = false
 local peers, last_lotted = {}, {}
 local owner_lot = {chigre=true, verdelet=true, lamia=true, mahjlaef=true, nuhn=true}
 local delay_after_kill = 12
+local retry_interval = 2
 local max_spawn_wait = 25
 local target_range = 6
 
@@ -120,10 +123,15 @@ local function lot_trophy()
 end
 local function guarded_pop(requested_stage)
     local cfg = settings.stages[requested_stage]
-    if not cfg then return log('Unknown stage: '..tostring(requested_stage)) end
-    if windower.ffxi.get_player().status ~= 0 then return log('Not idle; refusing pop') end
-    -- Trading requires the target entity ID/index, not a selected player target.
-    -- Refuse ambiguous nearby ??? entities rather than trade to the wrong one.
+    if not cfg then return false, 'Unknown stage' end
+    local player = windower.ffxi.get_player()
+    if not player or player.status ~= 0 then return false, 'Not idle' end
+    local id = item_id(cfg.pop)
+    if not id then return false, 'Unknown pop item: '..cfg.pop, true end
+    local slot = owned_in_inventory(id)
+    if not slot then return false, 'No '..cfg.pop..' in main Inventory', true end
+
+    -- Resolve the entity directly; no need to select or retarget the ???.
     local t, matches = nil, 0
     for _, mob in pairs(windower.ffxi.get_mob_array() or {}) do
         if mob and mob.name == '???' and mob.id and mob.index
@@ -132,12 +140,9 @@ local function guarded_pop(requested_stage)
             t = mob
         end
     end
-    if matches == 0 then return log('No nearby ??? available; pop refused') end
-    if matches > 1 then return log('Multiple nearby ??? targets; pop refused to avoid wrong trade') end
-    local id = item_id(cfg.pop)
-    if not id then return log('Unknown item in resources: '..cfg.pop) end
-    local slot = owned_in_inventory(id)
-    if not slot then return log('No '..cfg.pop..' in main Inventory') end
+    if matches == 0 then return false, 'Waiting for nearby ??? to respawn' end
+    if matches > 1 then return false, 'Multiple nearby ??? targets: cannot choose safely', true end
+
     local pkt = packets.new('outgoing', 0x036, {
         ['Target'] = t.id,
         ['Target Index'] = t.index,
@@ -146,9 +151,38 @@ local function guarded_pop(requested_stage)
         ['Number of Items'] = 1,
     })
     packets.inject(pkt)
-    log('Traded '..cfg.pop..' to targeted ???; waiting for game result')
+    log('Sent '..cfg.pop..' trade to nearby ???; awaiting NM spawn')
     send('POPPED', requested_stage, me())
+    return true
 end
+
+local function queue_pop(requested_stage)
+    pending_stage = requested_stage
+    pending_retry_at, last_pending_log = 0, 0
+end
+
+local function service_pending_pop()
+    if not pending_stage or now() < pending_retry_at then return end
+    pending_retry_at = now() + retry_interval
+    local success, reason, fatal = guarded_pop(pending_stage)
+    if success then
+        -- Windower IPC broadcasts to other instances, not necessarily this sender.
+        if running and me() == settings.leader and waiting and awaiting_ack
+            and selected_owner == me() and pending_stage == stage then
+            awaiting_ack, last_pop_time = false, now()
+            log('Local trade sent; waiting for '..settings.stages[stage].mob)
+        end
+        pending_stage = nil
+    elseif fatal then
+        log('STOP: '..reason)
+        send('POPFAIL', pending_stage, me(), reason)
+        pending_stage = nil
+    elseif now() - last_pending_log >= 15 then
+        log(reason..'; retrying automatically')
+        last_pending_log = now()
+    end
+end
+
 local function broadcast_status()
     if not stage then return end
     send('QUERY', stage)
@@ -165,7 +199,7 @@ local function choose_owner()
     return options[1]
 end
 local function stop(reason)
-    running, waiting, seen_mob = false, false, false
+    running, waiting, seen_mob, awaiting_ack, pending_stage = false, false, false, false, nil
     if reason then log('STOP: '..reason) end
     send('STOP')
 end
@@ -176,14 +210,14 @@ local function advance()
         end_of_queue = true
         return stop('No valid pop items remaining across reported characters; rotation finished')
     end
-    last_owner, last_pop_time, waiting, seen_mob = owner, now(), true, false
+    last_owner, waiting, seen_mob, awaiting_ack, selected_owner = owner, true, false, true, owner
     if owner_lot[stage] then
         settings.stages[stage].recipient = owner
         -- This is a per-kill assignment, not a saved fixed recipient.
         send('CLAIM', stage, owner)
     end
     log('Next '..settings.stages[stage].mob..' pop: '..owner)
-    if owner == me() then guarded_pop(stage) else send('POP', stage, owner) end
+    if owner == me() then queue_pop(stage) else send('POP', stage, owner) end
 end
 
 windower.register_event('ipc message', function(raw)
@@ -198,9 +232,14 @@ windower.register_event('ipc message', function(raw)
         peers[p[4]] = {ready = p[5] == '1', time = now()}
     elseif p[2] == 'POP' and p[4] == me() then
         stage = p[3]
-        guarded_pop(stage)
+        queue_pop(stage)
+    elseif p[2] == 'POPPED' and running and waiting and awaiting_ack and p[3] == stage and p[4] == selected_owner then
+        awaiting_ack, last_pop_time = false, now()
+        log('Trade sent by '..p[4]..'; waiting for '..settings.stages[stage].mob)
+    elseif p[2] == 'POPFAIL' and running and waiting and awaiting_ack and p[3] == stage and p[4] == selected_owner then
+        stop('Pop failed on '..p[4]..': '..tostring(p[5]))
     elseif p[2] == 'STOP' then
-        running, waiting = false, false
+        running, waiting, awaiting_ack, pending_stage = false, false, false, nil
     elseif p[2] == 'STAGE' then
         stage = p[3]
         last_lotted = {}
@@ -217,9 +256,11 @@ end)
 windower.register_event('prerender', function()
     if not me() then return end
     lot_trophy()
+    service_pending_pop()
     if not running or me():lower() ~= settings.leader:lower() then return end
     if now() - last_query > 6 then broadcast_status(); last_query = now() end
     if not waiting then return end
+    if awaiting_ack then return end -- Respawn/idle retries must not start the NM spawn timeout.
     local mob = nearby_mob(settings.stages[stage].mob)
     if mob then
         seen_mob, last_seen_time = true, now()
@@ -255,6 +296,7 @@ windower.register_event('addon command', function(cmd, ...)
         local key = args[1]:lower()
         if not settings.stages[key] then return log('Unknown stage '..key) end
         stage, running, waiting, seen_mob, last_owner, peers, end_of_queue = key, true, false, false, '', {}, false
+        awaiting_ack, selected_owner, pending_stage = false, nil, nil
         send('STAGE', stage)
         broadcast_status()
         last_query = now()
@@ -263,7 +305,7 @@ windower.register_event('addon command', function(cmd, ...)
     elseif cmd == 'stop' then
         stop('manual stop')
     elseif cmd == 'status' then
-        log('stage='..tostring(stage)..' leader='..settings.leader..' active='..tostring(running)..' waiting='..tostring(waiting))
+        log('stage='..tostring(stage)..' leader='..settings.leader..' active='..tostring(running)..' waiting='..tostring(waiting)..' awaiting_trade='..tostring(awaiting_ack)..' local_retry='..tostring(pending_stage))
         if stage then log('pop='..settings.stages[stage].pop..' recipient='..tostring(settings.stages[stage].recipient)) end
     else log('Unknown command; //znmh help') end
 end)
