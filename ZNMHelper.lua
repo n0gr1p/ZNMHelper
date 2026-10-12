@@ -8,24 +8,28 @@ local res = require('resources')
 local config = require('config')
 
 local defaults = {
-    leader = 'Niightsiide',
+    -- Optional leader restriction; by default whoever runs //znmh start leads.
+    leader = '',
+    -- Only explicit user overrides go here. Old per-stage saved recipients are ignored.
+    recipient_overrides = {},
     -- Configure per NM before starting. Exact item names are resolved via Windower resources.
     stages = {
-        vulpangue = {pop = 'Hellcage Butterfly', mob = 'Vulpangue', trophy = "Vulpangue's Wing", recipient = 'Etamame'},
-        irizima = {pop = 'Senorita Pamama', mob = 'Iriz Ima', trophy = "Iriz Ima's Hide", recipient = 'Etamame'},
-        lamia = {pop = 'Myrrh', mob = 'Experimental Lamia', trophy = 'Ex. Lamia Armband', recipient = 'owner'},
-        mahjlaef = {pop = 'Exorcism Treatise', mob = 'Mahjlaef the Paintorn', trophy = "Mahjlaef's Staff", recipient = 'owner'},
-        nuhn = {pop = 'Rose Scampi', mob = 'Nuhn', trophy = "Nuhn's Esca", recipient = 'owner'},
-        armedgears = {pop = 'Ferrite', mob = 'Armed Gears', trophy = "A. Gears' Fragment", recipient = 'Etamame'},
-        gotohzha = {pop = 'Sheep Botfly', mob = 'Gotoh Zha the Redolent', trophy = "G. Zha's Necklace", recipient = 'Etamame'},
-        dea = {pop = 'Olzhiryan Cactus', mob = 'Dea', trophy = "Dea's Horn", recipient = 'Etamame'},
-        chigre = {pop = 'Spoilt Blood', mob = 'Chigre', trophy = 'Chigre', recipient = 'owner'},
-        verdelet = {pop = 'Mint Drop', mob = 'Verdelet', trophy = "Verdelet's Wing", recipient = 'owner'},
-        tyger = {pop = 'Singed Buffalo', mob = 'Tyger', trophy = "Tyger's Tail", recipient = ''},
-        tinnin = {pop = 'Monkey Wine', mob = 'Tinnin', trophy = "Tinnin's Fang", recipient = 'Niightsiide'},
+        vulpangue = {pop = 'Hellcage Butterfly', mob = 'Vulpangue', trophy = "Vulpangue's Wing"},
+        irizima = {pop = 'Senorita Pamama', mob = 'Iriz Ima', trophy = "Iriz Ima's Hide"},
+        lamia = {pop = 'Myrrh', mob = 'Experimental Lamia', trophy = 'Ex. Lamia Armband'},
+        mahjlaef = {pop = 'Exorcism Treatise', mob = 'Mahjlaef the Paintorn', trophy = "Mahjlaef's Staff"},
+        nuhn = {pop = 'Rose Scampi', mob = 'Nuhn', trophy = "Nuhn's Esca"},
+        armedgears = {pop = 'Ferrite', mob = 'Armed Gears', trophy = "A. Gears' Fragment"},
+        gotohzha = {pop = 'Sheep Botfly', mob = 'Gotoh Zha the Redolent', trophy = "G. Zha's Necklace"},
+        dea = {pop = 'Olzhiryan Cactus', mob = 'Dea', trophy = "Dea's Horn"},
+        chigre = {pop = 'Spoilt Blood', mob = 'Chigre', trophy = 'Chigre'},
+        verdelet = {pop = 'Mint Drop', mob = 'Verdelet', trophy = "Verdelet's Wing"},
+        tyger = {pop = 'Singed Buffalo', mob = 'Tyger', trophy = "Tyger's Tail"},
+        tinnin = {pop = 'Monkey Wine', mob = 'Tinnin', trophy = "Tinnin's Fang"},
     },
 }
 local settings = config.load(defaults)
+settings.recipient_overrides = settings.recipient_overrides or {}
 local running, stage, waiting, seen_mob, last_owner = false, nil, false, false, ''
 local last_pop_time, last_seen_time, last_query = 0, 0, 0
 local pending_stage, pending_retry_at, last_pending_log = nil, 0, 0
@@ -33,8 +37,7 @@ local pending_fresh_seen, pending_fresh_target = nil, nil
 local awaiting_ack, selected_owner = false, nil
 local end_of_queue = false
 local peers, last_lotted = {}, {}
-local owner_lot = {chigre=true, verdelet=true, lamia=true, mahjlaef=true, nuhn=true}
-local claimed_owner = nil
+local claimed_owner, session_leader = nil, nil
 -- Followers do not set "running": they must explicitly receive START to enable
 -- loot handling, and STOP always disarms it, even if stage/recipient stay cached.
 local loot_active = false
@@ -149,12 +152,29 @@ local function audit_loot_request(action, trophy, recipient, slot)
         loot_audit_error_reported = true
     end
 end
+local function trophy_recipient(stage_key)
+    -- Never infer entitlement from a saved stage definition: older settings.xml
+    -- files contain hardcoded recipients from the former one-off farming plan.
+    -- No trophy is routed until this session identifies the actual popper.
+    if not claimed_owner then return nil end
+    local override = settings.recipient_overrides[stage_key]
+    if override and override ~= '' and override:lower() ~= 'owner' then
+        return override
+    end
+    return claimed_owner
+end
+
+local function is_session_leader()
+    return session_leader and me()
+        and session_leader:lower() == me():lower()
+end
+
 local function lot_trophy()
     if not loot_active or not stage or not settings.stages[stage] then return end
     local cfg = settings.stages[stage]
     if not cfg.trophy or cfg.trophy == '' then return end
-    local recipient = owner_lot[stage] and claimed_owner or cfg.recipient
-    if not recipient or recipient == '' or recipient == 'owner' then return end
+    local recipient = trophy_recipient(stage)
+    if not recipient then return end
     local id = item_id(cfg.trophy)
     if not id then return end
     local items = windower.ffxi.get_items()
@@ -357,7 +377,7 @@ local function service_pending_pop()
     local success, reason, fatal = guarded_pop(pending_stage)
     if success then
         -- Windower IPC broadcasts to other instances, not necessarily this sender.
-        if running and me() == settings.leader and waiting and awaiting_ack
+        if running and is_session_leader() and waiting and awaiting_ack
             and selected_owner == me() and pending_stage == stage then
             awaiting_ack, last_pop_time = false, now()
             log('Local trade sent; waiting for '..settings.stages[stage].mob)
@@ -390,7 +410,7 @@ local function choose_owner()
 end
 local function stop(reason)
     running, waiting, seen_mob, awaiting_ack, pending_stage = false, false, false, false, nil
-    loot_active, claimed_owner, last_lotted = false, nil, {}
+    loot_active, claimed_owner, session_leader, last_lotted = false, nil, nil, {}
     pending_fresh_seen, pending_fresh_target = nil, nil
     if reason then log('STOP: '..reason) end
     send('STOP')
@@ -403,12 +423,10 @@ local function advance()
         return stop('No valid pop items remaining across reported characters; rotation finished')
     end
     last_owner, waiting, seen_mob, awaiting_ack, selected_owner = owner, true, false, true, owner
-    if owner_lot[stage] then
-        claimed_owner = owner
-        settings.stages[stage].recipient = owner
-        -- This is a per-kill assignment, not a saved fixed recipient.
-        send('CLAIM', stage, owner)
-    end
+    claimed_owner = owner
+    -- Ownership is assigned for every stage, including Tier IV pops.
+    -- Never mutate/persist the stage description when a popper is selected.
+    send('CLAIM', stage, owner)
     log('Next '..settings.stages[stage].mob..' pop: '..owner)
     if owner == me() then queue_pop(stage) else send('POP', stage, owner) end
 end
@@ -422,21 +440,17 @@ windower.register_event('ipc message', function(raw)
         stage = p[3]
         local id = item_id(settings.stages[stage].pop)
         send('READY', stage, me(), id and owned_in_inventory(id) and '1' or '0')
-        if running and me():lower() == settings.leader:lower() and owner_lot[stage] and claimed_owner then
+        if running and is_session_leader() and claimed_owner then
             send('CLAIM', stage, claimed_owner)
         end
         lot_trophy()
-    elseif p[2] == 'START' and settings.stages[p[3]] then
-        stage = p[3]
+    elseif p[2] == 'START' and settings.stages[p[3]] and p[4] and p[4] ~= '' then
+        stage, session_leader = p[3], p[4]
         loot_active, claimed_owner, last_lotted = true, nil, {}
     elseif p[2] == 'READY' and running and p[3] == stage and p[4] ~= me() then
         peers[p[4]] = {ready = p[5] == '1', time = now()}
     elseif p[2] == 'POP' and p[4] == me() and loot_active and p[3] == stage then
-        stage = p[3]
-        if owner_lot[stage] then
-            claimed_owner = me()
-            settings.stages[stage].recipient = me()
-        end
+        claimed_owner = me()
         queue_pop(stage)
     elseif p[2] == 'POPPED' and running and waiting and awaiting_ack and p[3] == stage and p[4] == selected_owner then
         awaiting_ack, last_pop_time = false, now()
@@ -445,18 +459,18 @@ windower.register_event('ipc message', function(raw)
         stop('Pop failed on '..p[4]..': '..tostring(p[5]))
     elseif p[2] == 'STOP' then
         running, waiting, awaiting_ack, pending_stage = false, false, false, nil
-        loot_active, claimed_owner, last_lotted = false, nil, {}
+        loot_active, claimed_owner, session_leader, last_lotted = false, nil, nil, {}
         pending_fresh_seen, pending_fresh_target = nil, nil
     elseif p[2] == 'STAGE' and settings.stages[p[3]] then
         stage = p[3]
         -- STAGE is configuration, not permission to lot. START must follow.
         loot_active, claimed_owner, last_lotted = false, nil, {}
-    elseif p[2] == 'CLAIM' and loot_active and stage == p[3] and settings.stages[p[3]] then
+    elseif p[2] == 'CLAIM' and loot_active and stage == p[3] and settings.stages[p[3]]
+        and p[4] and p[4] ~= '' then
+        if claimed_owner ~= p[4] then last_lotted = {} end
         claimed_owner = p[4]
-        settings.stages[p[3]].recipient = p[4]
-        last_lotted = {}
-    elseif p[2] == 'CONFIG' and settings.stages[p[3]] then
-        settings.stages[p[3]].recipient = p[4]
+    elseif p[2] == 'CONFIG' and settings.stages[p[3]] and p[4] and p[4] ~= '' then
+        settings.recipient_overrides[p[3]] = p[4]
         settings:save()
         last_lotted = {}
     end
@@ -467,7 +481,7 @@ windower.register_event('prerender', function()
     lot_trophy()
     debug_pop_tick()
     service_pending_pop()
-    if not running or me():lower() ~= settings.leader:lower() then return end
+    if not running or not is_session_leader() then return end
     if now() - last_query > 6 then broadcast_status(); last_query = now() end
     if not waiting then return end
     if awaiting_ack then return end -- Respawn/idle retries must not start the NM spawn timeout.
@@ -487,8 +501,8 @@ windower.register_event('addon command', function(cmd, ...)
     local args = {...}
     cmd = (cmd or 'help'):lower()
     if cmd == 'help' then
-        log('setup: //znmh leader Niightsiide (on each client); //znmh stage chigre')
-        log('loot: //znmh recipient chigre Nyoourke (broadcasts recipient for this stage)')
+        log('setup: optional //znmh leader Name; //znmh stage chigre')
+        log('loot: default=popper; optional //znmh recipient <stage> Name|owner')
         log('start: //znmh start chigre (leader only); //znmh stop; //znmh status')
         log('diagnostic: //znmh debugpop on|off|once (per-character 1Hz CSV file)')
         log('Pop owners must be near one unambiguous ??? and keep pops in main Inventory.')
@@ -519,13 +533,17 @@ windower.register_event('addon command', function(cmd, ...)
             log('Usage: //znmh debugpop on|off|once')
         end
     elseif cmd == 'leader' and args[1] then
-        settings.leader = args[1]; settings:save(); log('Leader: '..args[1])
+        settings.leader = args[1]:lower() == 'any' and '' or args[1]
+        settings:save()
+        log('Allowed run leader: '..(settings.leader ~= '' and settings.leader or 'any character'))
     elseif cmd == 'recipient' and args[1] and args[2] and settings.stages[args[1]:lower()] then
         local key = args[1]:lower()
-        settings.stages[key].recipient = args[2]
+        if loot_active then return log('Stop the active run before changing trophy recipient') end
+        local recipient = args[2]:lower() == 'owner' and 'owner' or args[2]
+        settings.recipient_overrides[key] = recipient
         settings:save()
-        send('CONFIG', key, args[2])
-        log('Trophy '..key..' assigned to '..args[2])
+        send('CONFIG', key, recipient)
+        log('Trophy '..key..' recipient policy: '..recipient)
     elseif cmd == 'stage' and args[1] and settings.stages[args[1]:lower()] then
         if loot_active then return log('Stop the active ZNM run before changing stage') end
         stage = args[1]:lower()
@@ -533,15 +551,17 @@ windower.register_event('addon command', function(cmd, ...)
         send('STAGE', stage)
         log('Stage '..stage)
     elseif cmd == 'start' and args[1] then
-        if me():lower() ~= settings.leader:lower() then return log('Start on leader only') end
+        if settings.leader ~= '' and me():lower() ~= settings.leader:lower() then
+            return log('Start restricted to '..settings.leader..'; //znmh leader any to clear')
+        end
         local key = args[1]:lower()
         if not settings.stages[key] then return log('Unknown stage '..key) end
         stage, running, waiting, seen_mob, last_owner, peers, end_of_queue = key, true, false, false, '', {}, false
-        claimed_owner, loot_active = nil, true
+        claimed_owner, loot_active, session_leader = nil, true, me()
         awaiting_ack, selected_owner, pending_stage = false, nil, nil
         pending_fresh_seen, pending_fresh_target, last_pop_time = nil, nil, 0
         send('STAGE', stage)
-        send('START', stage)
+        send('START', stage, me())
         broadcast_status()
         last_query = now()
         log('Armed '..key..'; collecting peer readiness (first pop in 3 seconds)')
@@ -549,7 +569,9 @@ windower.register_event('addon command', function(cmd, ...)
     elseif cmd == 'stop' then
         stop('manual stop')
     elseif cmd == 'status' then
-        log('stage='..tostring(stage)..' leader='..settings.leader..' active='..tostring(running)..' loot_active='..tostring(loot_active)..' claimed_owner='..tostring(claimed_owner)..' waiting='..tostring(waiting)..' awaiting_trade='..tostring(awaiting_ack)..' local_retry='..tostring(pending_stage))
-        if stage then log('pop='..settings.stages[stage].pop..' recipient='..tostring(settings.stages[stage].recipient)) end
+        log('stage='..tostring(stage)..' leader='..tostring(session_leader)..' restriction='..tostring(settings.leader)..' active='..tostring(running)..' loot_active='..tostring(loot_active)..' claimed_owner='..tostring(claimed_owner)..' waiting='..tostring(waiting)..' awaiting_trade='..tostring(awaiting_ack)..' local_retry='..tostring(pending_stage))
+        if stage then
+            log('pop='..settings.stages[stage].pop..' trophy_recipient='..tostring(trophy_recipient(stage) or 'awaiting popper')..' override='..tostring(settings.recipient_overrides[stage] or 'owner'))
+        end
     else log('Unknown command; //znmh help') end
 end)
