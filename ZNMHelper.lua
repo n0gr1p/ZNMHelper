@@ -516,7 +516,7 @@ windower.register_event('addon command', function(cmd, ...)
     if cmd == 'help' then
         log('setup: optional //znmh leader Name; //znmh stage chigre')
         log('loot: default=popper; optional //znmh recipient <stage> Name|owner')
-        log('start: //znmh start chigre (leader only); //znmh stop; //znmh status')
+        log('start: //znmh start <stage> (initiating client leads); //znmh stop; //znmh status')
         log('diagnostic: //znmh debugpop on|off|once (per-character 1Hz CSV file)')
         log('Pop owners must be near one unambiguous ??? and keep pops in main Inventory.')
     elseif cmd == 'debugpop' then
