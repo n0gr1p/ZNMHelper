@@ -11,8 +11,16 @@ local defaults = {
     leader = 'Niightsiide',
     -- Configure per NM before starting. Exact item names are resolved via Windower resources.
     stages = {
-        chigre = {pop = 'Spoilt Blood', mob = 'Chigre', trophy = '', recipient = ''},
-        verdelet = {pop = 'Mint Drop', mob = 'Verdelet', trophy = "Verdelet's Wing", recipient = ''},
+        vulpangue = {pop = 'Hellcage Butterfly', mob = 'Vulpangue', trophy = "Vulpangue's Wing", recipient = 'Etamame'},
+        irizima = {pop = 'Senorita Pamama', mob = 'Iriz Ima', trophy = "Iriz Ima's Hide", recipient = 'Etamame'},
+        lamia = {pop = 'Myrrh', mob = 'Experimental Lamia', trophy = 'Ex. Lamia Armband', recipient = 'owner'},
+        mahjlaef = {pop = 'Exorcism Treatise', mob = 'Mahjlaef the Paintorn', trophy = "Mahjlaef's Staff", recipient = 'owner'},
+        nuhn = {pop = 'Rose Scampi', mob = 'Nuhn', trophy = "Nuhn's Esca", recipient = 'owner'},
+        armedgears = {pop = 'Ferrite', mob = 'Armed Gears', trophy = "A. Gears' Fragment", recipient = 'Etamame'},
+        gotohzha = {pop = 'Sheep Botfly', mob = 'Gotoh Zha the Redolent', trophy = "G. Zha's Necklace", recipient = 'Etamame'},
+        dea = {pop = 'Olzhiryan Cactus', mob = 'Dea', trophy = "Dea's Horn", recipient = 'Etamame'},
+        chigre = {pop = 'Spoilt Blood', mob = 'Chigre', trophy = 'Chigre', recipient = 'owner'},
+        verdelet = {pop = 'Mint Drop', mob = 'Verdelet', trophy = "Verdelet's Wing", recipient = 'owner'},
         tyger = {pop = 'Singed Buffalo', mob = 'Tyger', trophy = "Tyger's Tail", recipient = ''},
         tinnin = {pop = 'Monkey Wine', mob = 'Tinnin', trophy = "Tinnin's Fang", recipient = 'Niightsiide'},
     },
@@ -21,11 +29,12 @@ local settings = config.load(defaults)
 local running, stage, waiting, seen_mob, last_owner = false, nil, false, false, ''
 local last_pop_time, last_seen_time, last_query = 0, 0, 0
 local peers, last_lotted = {}, {}
+local owner_lot = {chigre=true, verdelet=true, lamia=true, mahjlaef=true, nuhn=true}
 local delay_after_kill = 12
 local max_spawn_wait = 25
 local target_range = 6
 
-local function now() return os.clock() end
+local function now() return os.time() end
 local function me()
     local p = windower.ffxi.get_player()
     return p and p.name or nil
@@ -79,7 +88,7 @@ local function has_treasure(item_name)
     local id = item_id(item_name)
     if not id then return false end
     local all = windower.ffxi.get_items()
-    for slot = 1, 10 do
+    for slot = 0, 9 do
         local v = all and all.treasure and all.treasure[slot]
         if v and v.item_id == id then return true end
     end
@@ -88,14 +97,14 @@ end
 local function lot_trophy()
     if not stage or not settings.stages[stage] then return end
     local cfg = settings.stages[stage]
-    if not cfg.trophy or cfg.trophy == '' or not cfg.recipient or cfg.recipient == '' then return end
+    if not cfg.trophy or cfg.trophy == '' or not cfg.recipient or cfg.recipient == '' or cfg.recipient == 'owner' then return end
     local id = item_id(cfg.trophy)
     if not id then return end
     local items = windower.ffxi.get_items()
     for slot = 1, 10 do
         local v = items and items.treasure and items.treasure[slot]
         if v and v.item_id == id then
-            local fingerprint = stage..':'..slot..':'..tostring(v.item_id)..':'..tostring(v.timestamp or 0)
+            local fingerprint = stage..':'..slot..':'..tostring(v.item_id)..':'..tostring(v.timestamp or v.drop_time or 0)
             if not last_lotted[fingerprint] then
                 last_lotted[fingerprint] = true
                 if me():lower() == cfg.recipient:lower() then
@@ -156,6 +165,11 @@ local function advance()
     local owner = choose_owner()
     if not owner then return stop('No client reports a usable pop item in main Inventory') end
     last_owner, last_pop_time, waiting, seen_mob = owner, now(), true, false
+    if owner_lot[stage] then
+        settings.stages[stage].recipient = owner
+        -- This is a per-kill assignment, not a saved fixed recipient.
+        send('CLAIM', stage, owner)
+    end
     log('Next '..settings.stages[stage].mob..' pop: '..owner)
     if owner == me() then guarded_pop(stage) else send('POP', stage, owner) end
 end
@@ -177,6 +191,9 @@ windower.register_event('ipc message', function(raw)
         running, waiting = false, false
     elseif p[2] == 'STAGE' then
         stage = p[3]
+        last_lotted = {}
+    elseif p[2] == 'CLAIM' and settings.stages[p[3]] then
+        settings.stages[p[3]].recipient = p[4]
         last_lotted = {}
     elseif p[2] == 'CONFIG' and settings.stages[p[3]] then
         settings.stages[p[3]].recipient = p[4]
