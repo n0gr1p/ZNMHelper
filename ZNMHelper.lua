@@ -122,10 +122,18 @@ local function guarded_pop(requested_stage)
     local cfg = settings.stages[requested_stage]
     if not cfg then return log('Unknown stage: '..tostring(requested_stage)) end
     if windower.ffxi.get_player().status ~= 0 then return log('Not idle; refusing pop') end
-    local t = windower.ffxi.get_mob_by_target('t')
-    if not t or t.name ~= '???' or not t.distance or t.distance > target_range * target_range then
-        return log('Target the correct nearby ??? on this character; pop refused')
+    -- Trading requires the target entity ID/index, not a selected player target.
+    -- Refuse ambiguous nearby ??? entities rather than trade to the wrong one.
+    local t, matches = nil, 0
+    for _, mob in pairs(windower.ffxi.get_mob_array() or {}) do
+        if mob and mob.name == '???' and mob.id and mob.index
+            and mob.distance and mob.distance <= target_range * target_range then
+            matches = matches + 1
+            t = mob
+        end
     end
+    if matches == 0 then return log('No nearby ??? available; pop refused') end
+    if matches > 1 then return log('Multiple nearby ??? targets; pop refused to avoid wrong trade') end
     local id = item_id(cfg.pop)
     if not id then return log('Unknown item in resources: '..cfg.pop) end
     local slot = owned_in_inventory(id)
@@ -231,7 +239,7 @@ windower.register_event('addon command', function(cmd, ...)
         log('setup: //znmh leader Niightsiide (on each client); //znmh stage chigre')
         log('loot: //znmh recipient chigre Nyoourke (broadcasts recipient for this stage)')
         log('start: //znmh start chigre (leader only); //znmh stop; //znmh status')
-        log('All pop owners must target the correct ??? and keep the pop in main Inventory.')
+        log('Pop owners must be near one unambiguous ??? and keep pops in main Inventory.')
     elseif cmd == 'leader' and args[1] then
         settings.leader = args[1]; settings:save(); log('Leader: '..args[1])
     elseif cmd == 'recipient' and args[1] and args[2] and settings.stages[args[1]:lower()] then
