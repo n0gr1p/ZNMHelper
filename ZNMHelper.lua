@@ -28,6 +28,7 @@ local defaults = {
 local settings = config.load(defaults)
 local running, stage, waiting, seen_mob, last_owner = false, nil, false, false, ''
 local last_pop_time, last_seen_time, last_query = 0, 0, 0
+local end_of_queue = false
 local peers, last_lotted = {}, {}
 local owner_lot = {chigre=true, verdelet=true, lamia=true, mahjlaef=true, nuhn=true}
 local delay_after_kill = 12
@@ -161,9 +162,12 @@ local function stop(reason)
     send('STOP')
 end
 local function advance()
-    if not running or waiting then return end
+    if not running or waiting or end_of_queue then return end
     local owner = choose_owner()
-    if not owner then return stop('No client reports a usable pop item in main Inventory') end
+    if not owner then
+        end_of_queue = true
+        return stop('No valid pop items remaining across reported characters; rotation finished')
+    end
     last_owner, last_pop_time, waiting, seen_mob = owner, now(), true, false
     if owner_lot[stage] then
         settings.stages[stage].recipient = owner
@@ -242,7 +246,7 @@ windower.register_event('addon command', function(cmd, ...)
         if me():lower() ~= settings.leader:lower() then return log('Start on leader only') end
         local key = args[1]:lower()
         if not settings.stages[key] then return log('Unknown stage '..key) end
-        stage, running, waiting, seen_mob, last_owner, peers = key, true, false, false, '', {}
+        stage, running, waiting, seen_mob, last_owner, peers, end_of_queue = key, true, false, false, '', {}, false
         send('STAGE', stage)
         broadcast_status()
         last_query = now()
