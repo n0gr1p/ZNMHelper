@@ -33,6 +33,7 @@ local awaiting_ack, selected_owner = false, nil
 local end_of_queue = false
 local peers, last_lotted = {}, {}
 local owner_lot = {chigre=true, verdelet=true, lamia=true, mahjlaef=true, nuhn=true}
+local claimed_owner = nil
 local delay_after_kill = 12
 local retry_interval = 2
 local max_spawn_wait = 25
@@ -101,17 +102,19 @@ end
 local function lot_trophy()
     if not stage or not settings.stages[stage] then return end
     local cfg = settings.stages[stage]
-    if not cfg.trophy or cfg.trophy == '' or not cfg.recipient or cfg.recipient == '' or cfg.recipient == 'owner' then return end
+    if not cfg.trophy or cfg.trophy == '' then return end
+    local recipient = owner_lot[stage] and claimed_owner or cfg.recipient
+    if not recipient or recipient == '' or recipient == 'owner' then return end
     local id = item_id(cfg.trophy)
     if not id then return end
     local items = windower.ffxi.get_items()
-    for slot = 1, 10 do
+    for slot = 0, 9 do
         local v = items and items.treasure and items.treasure[slot]
         if v and v.item_id == id then
             local fingerprint = stage..':'..slot..':'..tostring(v.item_id)..':'..tostring(v.timestamp or v.drop_time or 0)
             if not last_lotted[fingerprint] then
                 last_lotted[fingerprint] = true
-                if me():lower() == cfg.recipient:lower() then
+                if me():lower() == recipient:lower() then
                     windower.ffxi.lot_item(slot)
                     log('Lotting '..cfg.trophy..' for '..me())
                 else
@@ -212,6 +215,7 @@ local function advance()
     end
     last_owner, waiting, seen_mob, awaiting_ack, selected_owner = owner, true, false, true, owner
     if owner_lot[stage] then
+        claimed_owner = owner
         settings.stages[stage].recipient = owner
         -- This is a per-kill assignment, not a saved fixed recipient.
         send('CLAIM', stage, owner)
@@ -227,11 +231,18 @@ windower.register_event('ipc message', function(raw)
         stage = p[3]
         local id = item_id(settings.stages[stage].pop)
         send('READY', stage, me(), id and owned_in_inventory(id) and '1' or '0')
+        if running and me():lower() == settings.leader:lower() and owner_lot[stage] and claimed_owner then
+            send('CLAIM', stage, claimed_owner)
+        end
         lot_trophy()
     elseif p[2] == 'READY' and running and p[3] == stage and p[4] ~= me() then
         peers[p[4]] = {ready = p[5] == '1', time = now()}
     elseif p[2] == 'POP' and p[4] == me() then
         stage = p[3]
+        if owner_lot[stage] then
+            claimed_owner = me()
+            settings.stages[stage].recipient = me()
+        end
         queue_pop(stage)
     elseif p[2] == 'POPPED' and running and waiting and awaiting_ack and p[3] == stage and p[4] == selected_owner then
         awaiting_ack, last_pop_time = false, now()
@@ -242,8 +253,11 @@ windower.register_event('ipc message', function(raw)
         running, waiting, awaiting_ack, pending_stage = false, false, false, nil
     elseif p[2] == 'STAGE' then
         stage = p[3]
+        claimed_owner = nil
         last_lotted = {}
     elseif p[2] == 'CLAIM' and settings.stages[p[3]] then
+        stage = p[3]
+        claimed_owner = p[4]
         settings.stages[p[3]].recipient = p[4]
         last_lotted = {}
     elseif p[2] == 'CONFIG' and settings.stages[p[3]] then
@@ -290,12 +304,13 @@ windower.register_event('addon command', function(cmd, ...)
         send('CONFIG', key, args[2])
         log('Trophy '..key..' assigned to '..args[2])
     elseif cmd == 'stage' and args[1] and settings.stages[args[1]:lower()] then
-        stage = args[1]:lower(); send('STAGE', stage); log('Stage '..stage)
+        stage = args[1]:lower(); claimed_owner = nil; send('STAGE', stage); log('Stage '..stage)
     elseif cmd == 'start' and args[1] then
         if me():lower() ~= settings.leader:lower() then return log('Start on leader only') end
         local key = args[1]:lower()
         if not settings.stages[key] then return log('Unknown stage '..key) end
         stage, running, waiting, seen_mob, last_owner, peers, end_of_queue = key, true, false, false, '', {}, false
+        claimed_owner = nil
         awaiting_ack, selected_owner, pending_stage = false, nil, nil
         send('STAGE', stage)
         broadcast_status()
