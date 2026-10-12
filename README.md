@@ -16,6 +16,12 @@ Copy the repository folder to `Windower4/addons/ZNMHelper` on **every client** a
 
 **Do not leave it unattended.** If the mob does not appear within 25 seconds after sending a trade packet, it stops. An absent ??? does not start this timeout and is retried automatically. The 180-second post-NM hold enforces the historical ZNM respawn interval, and the additional 20-second fresh-??? cooldown is precautionary. Entity-list visibility alone does not prove server readiness. This does not yet confirm server acceptance of a trade packet; an entity remaining in memory while unavailable may still cause a premature attempt. Failure to pop correctly can require manual intervention. It cannot verify the actual event completion, ownership of seals, or NPC menu outcomes.
 
+## Passive ??? state diagnostics
+
+On one parked character, run `//znmh debugpop on`. ZNMHelper scans nearby `???` entities directly from Windower's entity array, **without selecting a target, trading an item, or affecting rotation**. It checks once per second, logs on changes to presence/count, entity ID/index, `valid_target`, `status`, `spawn_type`, `target_type`, `hpp`, or `is_npc`, and prints a snapshot every 30 seconds. The message includes squared distance and coordinates to correlate observations. Run `//znmh debugpop once` for one snapshot or `//znmh debugpop off` to disable it. The setting is intentionally local and non-persistent; enable it separately on any client being observed. Log output is written to the normal Windower chat/addon log.
+
+A `???` missing from Windower's local entity array is logged as `nearby ???=none`. These are client-side observations, **not proof of server trade acceptance**. Record logs before, during, and after a pop cooldown; keep the existing trade cooldown in place until observed data establishes a reliable readiness signal.
+
 ## Loot routing
 
 Set on leader, and broadcast to all clients:
