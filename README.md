@@ -11,10 +11,10 @@ Copy the repository folder to `Windower4/addons/ZNMHelper` on **every client** a
 1. On each client: `//znmh leader Niightsiide` (or choose another leader).
 2. Move the correct ZNM pop into **main Inventory** on every character that should pop.
 3. Park **each participating character** within range of the correct ???. No manual target selection is required. The addon resolves the nearby ??? directly and refuses an ambiguous location with multiple ??? entities in range.
-4. On the leader only: `//znmh start chigre`. The leader queries clients, chooses one holder, asks it to trade its item, waits until the named NM appears and then disappears, checks for unresolved trophy in treasure pool, and (after 180 seconds from the last sighting of the defeated NM) selects another holder. For subsequent pops, the leader first holds rotation for 180 seconds after the defeated NM was last seen; then the selected holder waits an additional 20 seconds from first seeing an eligible nearby ??? before trading (the timer resets if the ??? disappears). It retries checks every 2 seconds while the ??? is absent or the character is busy; the 25-second NM-spawn timeout begins only after a trade packet is sent. The first pop of a newly started rotation has no extra 20-second wait.
+4. On the leader only: `//znmh start chigre`. The leader queries clients and selects a holder. The selected character independently checks its nearby `???` every 2 seconds, **without targeting**. The `???` must be unambiguous, in range, and report `valid_target == true` continuously for **20 seconds** before the trade packet is sent. If the `???` disappears, becomes invalid, or changes entity ID/index, the timer resets. This applies to the **first pop and every subsequent pop**. After an NM disappears, the leader waits 12 seconds and for the trophy to clear before selecting another holder. The 25-second NM-spawn timeout begins only after a trade packet is sent.
 5. `//znmh status`; `//znmh stop` at any time.
 
-**Do not leave it unattended.** If the mob does not appear within 25 seconds after sending a trade packet, it stops. An absent ??? does not start this timeout and is retried automatically. The 180-second post-NM hold enforces the historical ZNM respawn interval, and the additional 20-second fresh-??? cooldown is precautionary. Entity-list visibility alone does not prove server readiness. This does not yet confirm server acceptance of a trade packet; an entity remaining in memory while unavailable may still cause a premature attempt. Failure to pop correctly can require manual intervention. It cannot verify the actual event completion, ownership of seals, or NPC menu outcomes.
+**Do not leave it unattended.** If the NM does not appear within 25 seconds after sending a trade packet, the addon stops. A missing `???` or `valid_target ~= true` does **not** start this timeout: the current popper keeps checking every 2 seconds until the flag remains true for 20 seconds. The old fixed 180-second hold has been removed. `valid_target` is a client-side readiness signal and the 20-second safety buffer is precautionary; neither is a server-side confirmation of trade acceptance. A rejected packet can still trigger the existing 25-second timeout. One-off trade issues may require manual intervention.
 
 ## Passive ??? state diagnostics
 
@@ -34,7 +34,7 @@ The file is flushed **after every record** to reduce data loss on a crash or for
 - `//znmh debugpop once` — append one manual snapshot to the file
 - `//znmh debugpop off` — stop logging and close the file
 
-Debug logging is intentionally local and non-persistent. Enable it separately on each client you want to observe, then compare the CSV before, during, and after the cooldown. An entity's `valid_target` value is **not proof of server-side trade acceptance**. The conservative cooldown remains unchanged while evidence is collected.
+Debug logging is intentionally local and non-persistent. Enable it separately on each client you want to observe, then compare the CSV before, during, and after the cooldown. The popper now requires `valid_target == true` for a 20-second safety buffer before trading. That signal is **not proof of server-side trade acceptance**.
 
 ## Loot routing
 
