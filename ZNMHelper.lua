@@ -29,15 +29,15 @@ local settings = config.load(defaults)
 local running, stage, waiting, seen_mob, last_owner = false, nil, false, false, ''
 local last_pop_time, last_seen_time, last_query = 0, 0, 0
 local pending_stage, pending_retry_at, last_pending_log = nil, 0, 0
-local pending_fresh_wait, pending_fresh_seen = false, nil
+local pending_fresh_seen, pending_fresh_target = nil, nil
 local awaiting_ack, selected_owner = false, nil
 local end_of_queue = false
 local peers, last_lotted = {}, {}
 local owner_lot = {chigre=true, verdelet=true, lamia=true, mahjlaef=true, nuhn=true}
 local claimed_owner = nil
--- ZNM ??? has a three-minute respawn cooldown; start the next owner's
--- 20-second fresh-pop safety wait only after this minimum has elapsed.
-local delay_after_kill = 180
+-- Allow time for the NM and treasure pool to settle before assigning another
+-- popper. Respawn readiness is checked on the selected popper, not timed here.
+local delay_after_kill = 12
 local retry_interval = 2
 local fresh_pop_delay = 20
 local max_spawn_wait = 25
@@ -266,16 +266,26 @@ local function guarded_pop(requested_stage)
         end
     end
     if matches == 0 then
-        pending_fresh_seen = nil
-        return false, 'Waiting for nearby ??? to respawn'
+        pending_fresh_seen, pending_fresh_target = nil, nil
+        return false, 'Waiting for nearby ???'
     end
-    if matches > 1 then return false, 'Multiple nearby ??? targets: cannot choose safely', true end
-    if pending_fresh_wait then
-        pending_fresh_seen = pending_fresh_seen or now()
-        local remaining = fresh_pop_delay - (now() - pending_fresh_seen)
-        if remaining > 0 then
-            return false, 'Allowing fresh ??? to settle ('..remaining..'s remaining)'
-        end
+    if matches > 1 then
+        pending_fresh_seen, pending_fresh_target = nil, nil
+        return false, 'Multiple nearby ??? targets: cannot choose safely', true
+    end
+    -- A visible ??? may still be in its cooldown state. Require the selected
+    -- popper to observe valid_target=true for 20 continuous seconds.
+    if t.valid_target ~= true then
+        pending_fresh_seen, pending_fresh_target = nil, nil
+        return false, 'Waiting for nearby ??? valid_target=true'
+    end
+    local target_key = tostring(t.id)..':'..tostring(t.index)
+    if pending_fresh_target ~= target_key then
+        pending_fresh_target, pending_fresh_seen = target_key, now()
+    end
+    local remaining = fresh_pop_delay - (now() - pending_fresh_seen)
+    if remaining > 0 then
+        return false, '??? valid_target=true; safety buffer '..remaining..'s remaining'
     end
 
     local pkt = packets.new('outgoing', 0x036, {
@@ -291,9 +301,9 @@ local function guarded_pop(requested_stage)
     return true
 end
 
-local function queue_pop(requested_stage, fresh_wait)
+local function queue_pop(requested_stage)
     pending_stage = requested_stage
-    pending_fresh_wait, pending_fresh_seen = fresh_wait == true, nil
+    pending_fresh_seen, pending_fresh_target = nil, nil
     pending_retry_at, last_pending_log = 0, 0
 end
 
@@ -336,7 +346,7 @@ local function choose_owner()
 end
 local function stop(reason)
     running, waiting, seen_mob, awaiting_ack, pending_stage = false, false, false, false, nil
-    pending_fresh_seen = nil
+    pending_fresh_seen, pending_fresh_target = nil, nil
     if reason then log('STOP: '..reason) end
     send('STOP')
 end
@@ -347,7 +357,6 @@ local function advance()
         end_of_queue = true
         return stop('No valid pop items remaining across reported characters; rotation finished')
     end
-    local needs_fresh_wait = last_pop_time > 0
     last_owner, waiting, seen_mob, awaiting_ack, selected_owner = owner, true, false, true, owner
     if owner_lot[stage] then
         claimed_owner = owner
@@ -356,7 +365,7 @@ local function advance()
         send('CLAIM', stage, owner)
     end
     log('Next '..settings.stages[stage].mob..' pop: '..owner)
-    if owner == me() then queue_pop(stage, needs_fresh_wait) else send('POP', stage, owner, needs_fresh_wait and '1' or '0') end
+    if owner == me() then queue_pop(stage) else send('POP', stage, owner) end
 end
 
 windower.register_event('ipc message', function(raw)
@@ -378,7 +387,7 @@ windower.register_event('ipc message', function(raw)
             claimed_owner = me()
             settings.stages[stage].recipient = me()
         end
-        queue_pop(stage, p[5] == '1')
+        queue_pop(stage)
     elseif p[2] == 'POPPED' and running and waiting and awaiting_ack and p[3] == stage and p[4] == selected_owner then
         awaiting_ack, last_pop_time = false, now()
         log('Trade sent by '..p[4]..'; waiting for '..settings.stages[stage].mob)
@@ -386,7 +395,7 @@ windower.register_event('ipc message', function(raw)
         stop('Pop failed on '..p[4]..': '..tostring(p[5]))
     elseif p[2] == 'STOP' then
         running, waiting, awaiting_ack, pending_stage = false, false, false, nil
-        pending_fresh_seen = nil
+        pending_fresh_seen, pending_fresh_target = nil, nil
     elseif p[2] == 'STAGE' then
         stage = p[3]
         claimed_owner = nil
@@ -476,7 +485,7 @@ windower.register_event('addon command', function(cmd, ...)
         stage, running, waiting, seen_mob, last_owner, peers, end_of_queue = key, true, false, false, '', {}, false
         claimed_owner = nil
         awaiting_ack, selected_owner, pending_stage = false, nil, nil
-        pending_fresh_wait, pending_fresh_seen, last_pop_time = false, nil, 0
+        pending_fresh_seen, pending_fresh_target, last_pop_time = nil, nil, 0
         send('STAGE', stage)
         broadcast_status()
         last_query = now()
