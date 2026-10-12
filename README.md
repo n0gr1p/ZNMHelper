@@ -38,27 +38,22 @@ Debug logging is intentionally local and non-persistent. Enable it separately on
 
 ## Loot routing
 
-Set on leader, and broadcast to all clients:
+By default, no recipient configuration is required: the character who pops receives that stage's trophy. An optional explicit override can route a particular trophy elsewhere.
 
-```
-//znmh recipient tyger Niightsiide
-//znmh recipient tinnin Niightsiide
-```
+**For all ZNM stages (including Vulpangue and Tinnin), the character who provides the pop item gets that NM's configured trophy by default.** The leader assigns an owner for every pop, broadcasts that claim, and clients scan treasure slots 0–9 for the configured trophy only. When an owner has not been identified, the addon does not lot or pass. Other characters pass the trophy; the recipient lots it. A per-pop claim number distinguishes new pops by the same character from duplicate status messages. One Rare/Ex trophy per owner per wave; turn it in to Sanraku before continuing a repeat wave. The addon does **not** trade trophies to Sanraku.
 
-**For all ZNM stages (including Vulpangue and Tinnin), the character who provides the pop item gets that NM's configured trophy by default.** The leader assigns an owner for every pop, broadcasts that claim, and clients scan treasure slots 0–9 for the configured trophy only. When an owner has not been identified, the addon does not lot or pass. Other characters pass the trophy; the recipient lots it. One Rare/Ex trophy per owner per wave; turn it in to Sanraku before continuing a repeat wave. The addon does **not** trade trophies to Sanraku.
-
-**Automatic lotting is enabled only during an explicitly started ZNM run.** The leader broadcasts `START` (with its character name) to arm each client; `//znmh stop` broadcasts `STOP`, clearing the session loot flag and stale owner assignment on every client. Merely setting the stage or receiving readiness queries cannot activate lotting, and changing the stage during an active run is refused.
+**Automatic lotting is enabled only during an explicitly started ZNM run.** The leader broadcasts `START` (with its name and effective trophy-recipient policy) to arm each client; `//znmh stop` broadcasts `STOP`, clearing the session loot flag and stale owner assignment on every client. Merely setting the stage or receiving readiness queries cannot activate lotting, and changing the stage during an active run is refused.
 
 **No stage has a hardcoded character recipient.** All twelve stage definitions are reusable. If you explicitly want an exception, set it before starting the run:
 
 ```text
-//znmh recipient vulpangue Redrogue
+//znmh recipient vulpangue CharacterName
 //znmh recipient vulpangue owner
 ```
 
-The first command gives the wing to Redrogue regardless of popper; the second restores popper ownership. Overrides are saved and broadcast to peers. Changes are refused during an active run. The `status` command reports the effective recipient and override policy.
+Replace `CharacterName` with the intended character. The first command redirects the wing regardless of popper; the second restores popper ownership. Overrides are saved and broadcast to connected peers. At run start, the initiator broadcasts the effective policy so clients with differing old settings agree for that run. Changes are refused during an active run. The `status` command reports the effective recipient and override policy.
 
-**Upgrade behavior:** old saved `stages.<stage>.recipient` values are intentionally ignored, since some were former hardcoded assumptions or previous runtime owner assignments. Only new, explicit `recipient_overrides` settings affect routing. Other saved preferences, such as leader restrictions and stage item names, continue to load.
+**Upgrade behavior:** old saved `stages.<stage>.recipient` values are intentionally ignored, since some were former hardcoded assumptions or previous runtime owner assignments. Only new, explicit `recipient_overrides` settings affect routing. Other saved preferences, such as leader restrictions and stage item names, continue to load. Old Etamame/Niightsiide trophy routes no longer apply unless explicitly recreated.
 
 ### Persistent loot-decision audit
 
@@ -68,9 +63,9 @@ Every automatic `lot_item` or `pass_item` request is recorded in a per-character
 Windower4/addons/ZNMHelper/data/ZNMHelper_loot_<Character>_YYYYMMDD.csv
 ```
 
-Each row records timestamp, character, requested action (`REQUEST_LOT` or `REQUEST_PASS`), stage, trophy, recipient, claimed owner, treasure slot, and active-session state. These are records of *requested actions*, not proof that the game awarded the trophy. If Etamame appears to be lotting something unexpected, compare Etamame's file with the actual treasure-pool item.
+Each row records timestamp, character, requested action (`REQUEST_LOT` or `REQUEST_PASS`), stage, trophy, recipient, claimed owner, treasure slot, and active-session state. These are records of *requested actions*, not proof that the game awarded the trophy. If a client appears to be lotting something unexpected, compare that client's file with the actual treasure-pool item.
 
-For Tyger, choose one Mythic recipient before each kill, or stop the queue between recipients. **Do not spawn the three trial Tyger pops before the Magian trial is active.**
+**Quest and trial credit are separate from trophy ownership.** Ensure required quests or trials are active before farming; ZNMHelper cannot verify those prerequisites.
 
 ## Known stage aliases
 
