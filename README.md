@@ -18,9 +18,23 @@ Copy the repository folder to `Windower4/addons/ZNMHelper` on **every client** a
 
 ## Passive ??? state diagnostics
 
-On one parked character, run `//znmh debugpop on`. ZNMHelper scans nearby `???` entities directly from Windower's entity array, **without selecting a target, trading an item, or affecting rotation**. It checks once per second, logs on changes to presence/count, entity ID/index, `valid_target`, `status`, `spawn_type`, `target_type`, `hpp`, or `is_npc`, and prints a snapshot every 30 seconds. The message includes squared distance and coordinates to correlate observations. Run `//znmh debugpop once` for one snapshot or `//znmh debugpop off` to disable it. The setting is intentionally local and non-persistent; enable it separately on any client being observed. Log output is written to the normal Windower chat/addon log.
+On a parked character, run `//znmh debugpop on`. The addon inspects nearby `???` entities directly from `get_mob_array()` **without targeting, trading, or affecting pop rotation**. It writes **one timestamped CSV record per second**, including unchanged snapshots, so transient entity flags and timing can be reconstructed even if there is no visible state transition.
 
-A `???` missing from Windower's local entity array is logged as `nearby ???=none`. These are client-side observations, **not proof of server trade acceptance**. Record logs before, during, and after a pop cooldown; keep the existing trade cooldown in place until observed data establishes a reliable readiness signal.
+Logs are written to:
+
+```text
+Windower4/addons/ZNMHelper/data/ZNMHelper_pop_<Character>_YYYYMMDD.csv
+```
+
+Each character has a separate append-only file containing timestamp, character, `CHANGE`/`SAMPLE`/`MANUAL` event type, stage, nearby count, entity ID/index, `valid_target`, `status`, `spawn_type`, `target_type`, `hpp`, `is_npc`, squared distance, coordinates, and pop-rotation state (`running`, `waiting`, `seen_nm`, `awaiting_ack`, `pending_stage`). Missing values stay as empty CSV columns rather than being silently replaced with guesses.
+
+The file is flushed **after every record** to reduce data loss on a crash or forced client exit. Only start/stop, explicit one-shot confirmation, and write failures print in game chat; diagnostic records do not spam chat. If a log file cannot be opened or written, the addon reports the failure and disables monitoring rather than silently pretending it logged.
+
+- `//znmh debugpop on` — begin local per-second file logging
+- `//znmh debugpop once` — append one manual snapshot to the file
+- `//znmh debugpop off` — stop logging and close the file
+
+Debug logging is intentionally local and non-persistent. Enable it separately on each client you want to observe, then compare the CSV before, during, and after the cooldown. An entity's `valid_target` value is **not proof of server-side trade acceptance**. The conservative cooldown remains unchanged while evidence is collected.
 
 ## Loot routing
 
