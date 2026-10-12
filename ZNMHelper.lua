@@ -38,6 +38,7 @@ local awaiting_ack, selected_owner = false, nil
 local end_of_queue = false
 local peers, last_lotted = {}, {}
 local claimed_owner, session_leader = nil, nil
+local claim_serial, received_claim_serial = 0, nil
 -- Followers do not set "running": they must explicitly receive START to enable
 -- loot handling, and STOP always disarms it, even if stage/recipient stay cached.
 local loot_active = false
@@ -411,6 +412,7 @@ end
 local function stop(reason)
     running, waiting, seen_mob, awaiting_ack, pending_stage = false, false, false, false, nil
     loot_active, claimed_owner, session_leader, last_lotted = false, nil, nil, {}
+    claim_serial, received_claim_serial = 0, nil
     pending_fresh_seen, pending_fresh_target = nil, nil
     if reason then log('STOP: '..reason) end
     send('STOP')
@@ -424,9 +426,12 @@ local function advance()
     end
     last_owner, waiting, seen_mob, awaiting_ack, selected_owner = owner, true, false, true, owner
     claimed_owner = owner
-    -- Ownership is assigned for every stage, including Tier IV pops.
-    -- Never mutate/persist the stage description when a popper is selected.
-    send('CLAIM', stage, owner)
+    claim_serial = claim_serial + 1
+    received_claim_serial = claim_serial
+    last_lotted = {}
+    -- A serial distinguishes the next kill from duplicate periodic QUERY replies,
+    -- even when the same character pops repeatedly.
+    send('CLAIM', stage, owner, claim_serial)
     log('Next '..settings.stages[stage].mob..' pop: '..owner)
     if owner == me() then queue_pop(stage) else send('POP', stage, owner) end
 end
@@ -441,12 +446,13 @@ windower.register_event('ipc message', function(raw)
         local id = item_id(settings.stages[stage].pop)
         send('READY', stage, me(), id and owned_in_inventory(id) and '1' or '0')
         if running and is_session_leader() and claimed_owner then
-            send('CLAIM', stage, claimed_owner)
+            send('CLAIM', stage, claimed_owner, claim_serial)
         end
         lot_trophy()
     elseif p[2] == 'START' and settings.stages[p[3]] and p[4] and p[4] ~= '' then
         stage, session_leader = p[3], p[4]
         loot_active, claimed_owner, last_lotted = true, nil, {}
+        claim_serial, received_claim_serial = 0, nil
     elseif p[2] == 'READY' and running and p[3] == stage and p[4] ~= me() then
         peers[p[4]] = {ready = p[5] == '1', time = now()}
     elseif p[2] == 'POP' and p[4] == me() and loot_active and p[3] == stage then
@@ -460,15 +466,19 @@ windower.register_event('ipc message', function(raw)
     elseif p[2] == 'STOP' then
         running, waiting, awaiting_ack, pending_stage = false, false, false, nil
         loot_active, claimed_owner, session_leader, last_lotted = false, nil, nil, {}
+        claim_serial, received_claim_serial = 0, nil
         pending_fresh_seen, pending_fresh_target = nil, nil
     elseif p[2] == 'STAGE' and settings.stages[p[3]] then
         stage = p[3]
         -- STAGE is configuration, not permission to lot. START must follow.
         loot_active, claimed_owner, last_lotted = false, nil, {}
+        claim_serial, received_claim_serial = 0, nil
     elseif p[2] == 'CLAIM' and loot_active and stage == p[3] and settings.stages[p[3]]
         and p[4] and p[4] ~= '' then
-        if claimed_owner ~= p[4] then last_lotted = {} end
-        claimed_owner = p[4]
+        local serial = tonumber(p[5])
+        if serial and received_claim_serial and serial < received_claim_serial then return end
+        if claimed_owner ~= p[4] or received_claim_serial ~= serial then last_lotted = {} end
+        claimed_owner, received_claim_serial = p[4], serial
     elseif p[2] == 'CONFIG' and settings.stages[p[3]] and p[4] and p[4] ~= '' then
         settings.recipient_overrides[p[3]] = p[4]
         settings:save()
@@ -558,6 +568,7 @@ windower.register_event('addon command', function(cmd, ...)
         if not settings.stages[key] then return log('Unknown stage '..key) end
         stage, running, waiting, seen_mob, last_owner, peers, end_of_queue = key, true, false, false, '', {}, false
         claimed_owner, loot_active, session_leader = nil, true, me()
+        claim_serial, received_claim_serial, last_lotted = 0, nil, {}
         awaiting_ack, selected_owner, pending_stage = false, nil, nil
         pending_fresh_seen, pending_fresh_target, last_pop_time = nil, nil, 0
         send('STAGE', stage)
