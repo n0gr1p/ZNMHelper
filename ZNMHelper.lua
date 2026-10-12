@@ -213,7 +213,7 @@ local function debug_write_record(event, fields)
     local row = {
         os.date('%Y-%m-%dT%H:%M:%S'), me() or '', event, stage or '',
     }
-    for index = 1, 13 do row[#row+1] = fields[index] end
+    for index = 1, 13 do row[#row+1] = debug_csv_value(fields[index]) end
     row[#row+1] = running
     row[#row+1] = waiting
     row[#row+1] = seen_mob
