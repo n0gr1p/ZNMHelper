@@ -6,9 +6,9 @@ Multibox ZNM pop rotation and trophy lotting for Windower 4.
 
 ## Install
 
-Copy the repository folder to `Windower4/addons/ZNMHelper` on **every client** and `//lua l ZNMHelper`. The addon uses Windower IPC (`windower.send_ipc_message`), so all characters must be Windower instances on the same machine with IPC functioning.
+Copy the repository folder to `Windower4/addons/ZNMHelper` on **every client** and `//lua l ZNMHelper`. The addon uses Windower IPC (`windower.send_ipc_message`), so all characters must be Windower instances on the same machine with IPC functioning. Stage aliases describe **items and monsters only**, not predetermined characters or farming chains.
 
-1. On each client: `//znmh leader Niightsiide` (or choose another leader).
+1. Optional: `//znmh leader Niightsiide` to restrict which client may initiate a run. Otherwise, **any character can start the run and automatically becomes leader**. Use `//znmh leader any` to remove a saved restriction.
 2. Move the correct ZNM pop into **main Inventory** on every character that should pop.
 3. Park **each participating character** within range of the correct ???. No manual target selection is required. The addon resolves the nearby ??? directly and refuses an ambiguous location with multiple ??? entities in range.
 4. On the leader only: `//znmh start chigre`. The leader queries clients and selects a holder. The selected character independently checks its nearby `???` every 2 seconds, **without targeting**. The `???` must be unambiguous, in range, and report `valid_target == true` continuously for **20 seconds** before the trade packet is sent. If the `???` disappears, becomes invalid, or changes entity ID/index, the timer resets. This applies to the **first pop and every subsequent pop**. After an NM disappears, the leader waits 12 seconds and for the trophy to clear before selecting another holder. The 25-second NM-spawn timeout begins only after a trade packet is sent.
@@ -45,11 +45,20 @@ Set on leader, and broadcast to all clients:
 //znmh recipient tinnin Niightsiide
 ```
 
-For Chigre, Verdelet, Experimental Lamia, Mahjlaef and Nuhn, the current pop *owner* is designated trophy recipient automatically. The addon tracks that owner explicitly, reapplies the owner assignment to peers during readiness queries, and scans treasure slots 0–9 for automatic lot/pass. If no owner has been assigned yet, it does not pass these trophies. The other characters pass only the configured trophy, and the designated character lots it. One Rare/Ex trophy per owner per wave; turn it in to Sanraku before continuing a repeat wave. The addon does **not** trade trophies to Sanraku.
+**For all ZNM stages (including Vulpangue and Tinnin), the character who provides the pop item gets that NM's configured trophy by default.** The leader assigns an owner for every pop, broadcasts that claim, and clients scan treasure slots 0–9 for the configured trophy only. When an owner has not been identified, the addon does not lot or pass. Other characters pass the trophy; the recipient lots it. One Rare/Ex trophy per owner per wave; turn it in to Sanraku before continuing a repeat wave. The addon does **not** trade trophies to Sanraku.
 
-**Automatic lotting is enabled only during an explicitly started ZNM run.** The leader broadcasts `START` to arm each client; `//znmh stop` broadcasts `STOP`, clearing the session loot flag and stale owner assignment on every client. Merely setting the stage or receiving readiness queries cannot activate lotting, and changing the stage during an active run is refused.
+**Automatic lotting is enabled only during an explicitly started ZNM run.** The leader broadcasts `START` (with its character name) to arm each client; `//znmh stop` broadcasts `STOP`, clearing the session loot flag and stale owner assignment on every client. Merely setting the stage or receiving readiness queries cannot activate lotting, and changing the stage during an active run is refused.
 
-**Fixed-recipient stages are different from owner stages:** Vulpangue, Iriz Ima, Armed Gears, Gotoh Zha, and Dea are currently configured to lot their trophies to **Etamame even if Etamame has no pop item**. Those defaults remain unchanged. Experimental Lamia's armband is owner-routed, so Etamame should not receive a ZNMHelper lot request for it unless Etamame is the assigned popper.
+**No stage has a hardcoded character recipient.** All twelve stage definitions are reusable. If you explicitly want an exception, set it before starting the run:
+
+```text
+//znmh recipient vulpangue Redrogue
+//znmh recipient vulpangue owner
+```
+
+The first command gives the wing to Redrogue regardless of popper; the second restores popper ownership. Overrides are saved and broadcast to peers. Changes are refused during an active run. The `status` command reports the effective recipient and override policy.
+
+**Upgrade behavior:** old saved `stages.<stage>.recipient` values are intentionally ignored, since some were former hardcoded assumptions or previous runtime owner assignments. Only new, explicit `recipient_overrides` settings affect routing. Other saved preferences, such as leader restrictions and stage item names, continue to load.
 
 ### Persistent loot-decision audit
 
