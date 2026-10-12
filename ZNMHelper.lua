@@ -42,6 +42,11 @@ local retry_interval = 2
 local fresh_pop_delay = 20
 local max_spawn_wait = 25
 local target_range = 6
+-- Debug observations are local to each client and never trigger a target or trade.
+local pop_debug = false
+local debug_last_poll, debug_last_snapshot = 0, 0
+local debug_last_state = nil
+local debug_last_identity = nil
 
 local function now() return os.time() end
 local function me()
@@ -128,6 +133,48 @@ local function lot_trophy()
         end
     end
 end
+local function debug_pop_snapshot()
+    local nearest, count = nil, 0
+    -- Inspect raw entities even when they are not currently valid targets.
+    for _, mob in pairs(windower.ffxi.get_mob_array() or {}) do
+        if mob and mob.name == '???' and mob.distance
+            and mob.distance <= target_range * target_range then
+            count = count + 1
+            if not nearest or mob.distance < nearest.distance then nearest = mob end
+        end
+    end
+    if not nearest then return 'none', 'nearby ???=none' end
+    local v = nearest.valid_target
+    local ident = tostring(nearest.id)..'/'..tostring(nearest.index)
+    local state = table.concat({
+        tostring(count), ident, tostring(v), tostring(nearest.status),
+        tostring(nearest.spawn_type), tostring(nearest.target_type),
+        tostring(nearest.hpp), tostring(nearest.is_npc)
+    }, '|')
+    local detail = string.format(
+        'nearby ??? count=%d id=%s index=%s valid_target=%s status=%s spawn_type=%s target_type=%s hpp=%s is_npc=%s distance_sq=%.2f x=%s y=%s z=%s',
+        count, tostring(nearest.id), tostring(nearest.index), tostring(v),
+        tostring(nearest.status), tostring(nearest.spawn_type),
+        tostring(nearest.target_type), tostring(nearest.hpp),
+        tostring(nearest.is_npc), nearest.distance,
+        tostring(nearest.x), tostring(nearest.y), tostring(nearest.z))
+    return state, detail, ident
+end
+
+local function debug_pop_tick()
+    if not pop_debug or now() == debug_last_poll then return end
+    debug_last_poll = now()
+    local state, detail, ident = debug_pop_snapshot()
+    if state ~= debug_last_state then
+        log('POP DEBUG CHANGE '..detail)
+        debug_last_state, debug_last_identity = state, ident
+        debug_last_snapshot = now()
+    elseif now() - debug_last_snapshot >= 30 then
+        log('POP DEBUG SNAPSHOT '..detail)
+        debug_last_snapshot = now()
+    end
+end
+
 local function guarded_pop(requested_stage)
     local cfg = settings.stages[requested_stage]
     if not cfg then return false, 'Unknown stage' end
@@ -288,6 +335,7 @@ end)
 windower.register_event('prerender', function()
     if not me() then return end
     lot_trophy()
+    debug_pop_tick()
     service_pending_pop()
     if not running or me():lower() ~= settings.leader:lower() then return end
     if now() - last_query > 6 then broadcast_status(); last_query = now() end
@@ -312,7 +360,25 @@ windower.register_event('addon command', function(cmd, ...)
         log('setup: //znmh leader Niightsiide (on each client); //znmh stage chigre')
         log('loot: //znmh recipient chigre Nyoourke (broadcasts recipient for this stage)')
         log('start: //znmh start chigre (leader only); //znmh stop; //znmh status')
+        log('diagnostic: //znmh debugpop on|off|once (on logs changes and 30s snapshots)')
         log('Pop owners must be near one unambiguous ??? and keep pops in main Inventory.')
+    elseif cmd == 'debugpop' then
+        local option = (args[1] or 'once'):lower()
+        if option == 'on' then
+            pop_debug, debug_last_state, debug_last_poll = true, nil, 0
+            log('POP DEBUG enabled on '..tostring(me())..' (local client only)')
+            local state, detail = debug_pop_snapshot()
+            log('POP DEBUG INITIAL '..detail)
+            debug_last_state, debug_last_snapshot = state, now()
+        elseif option == 'off' then
+            pop_debug = false
+            log('POP DEBUG disabled')
+        elseif option == 'once' then
+            local _, detail = debug_pop_snapshot()
+            log('POP DEBUG ONCE '..detail)
+        else
+            log('Usage: //znmh debugpop on|off|once')
+        end
     elseif cmd == 'leader' and args[1] then
         settings.leader = args[1]; settings:save(); log('Leader: '..args[1])
     elseif cmd == 'recipient' and args[1] and args[2] and settings.stages[args[1]:lower()] then
