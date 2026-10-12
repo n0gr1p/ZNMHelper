@@ -434,9 +434,11 @@ windower.register_event('addon command', function(cmd, ...)
         local option = (args[1] or 'once'):lower()
         if option == 'on' then
             if not debug_open_file() then return end
-            pop_debug, debug_last_state, debug_last_poll = true, nil, 0
+            pop_debug, debug_last_state, debug_last_poll = true, nil, now()
+            local state, fields = debug_pop_snapshot()
+            debug_write_record('START', fields)
+            debug_last_state = state
             log('POP DEBUG writing 1Hz CSV to '..debug_file_path)
-            debug_pop_tick()
         elseif option == 'off' then
             pop_debug = false
             if debug_file then
