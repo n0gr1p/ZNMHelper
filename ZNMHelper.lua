@@ -166,6 +166,12 @@ local function service_pending_pop()
     pending_retry_at = now() + retry_interval
     local success, reason, fatal = guarded_pop(pending_stage)
     if success then
+        -- Windower IPC broadcasts to other instances, not necessarily this sender.
+        if running and me() == settings.leader and waiting and awaiting_ack
+            and selected_owner == me() and pending_stage == stage then
+            awaiting_ack, last_pop_time = false, now()
+            log('Local trade sent; waiting for '..settings.stages[stage].mob)
+        end
         pending_stage = nil
     elseif fatal then
         log('STOP: '..reason)
