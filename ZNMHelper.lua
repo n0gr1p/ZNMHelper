@@ -250,7 +250,7 @@ local function guarded_pop(requested_stage)
     local cfg = settings.stages[requested_stage]
     if not cfg then return false, 'Unknown stage' end
     local player = windower.ffxi.get_player()
-    if not player or player.status ~= 0 then return false, 'Not idle' end
+    if not player then return false, 'Character not ready' end
     local id = item_id(cfg.pop)
     if not id then return false, 'Unknown pop item: '..cfg.pop, true end
     local slot = owned_in_inventory(id)
@@ -288,6 +288,7 @@ local function guarded_pop(requested_stage)
         return false, '??? valid_target=true; safety buffer '..remaining..'s remaining'
     end
 
+    if player.status ~= 0 then return false, 'Not idle' end
     local pkt = packets.new('outgoing', 0x036, {
         ['Target'] = t.id,
         ['Target Index'] = t.index,
