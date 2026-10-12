@@ -10,7 +10,7 @@ Copy the repository folder to `Windower4/addons/ZNMHelper` on **every client** a
 
 1. On each client: `//znmh leader Niightsiide` (or choose another leader).
 2. Move the correct ZNM pop into **main Inventory** on every character that should pop.
-3. Park **each participating character** at the correct ??? and **target the ??? on each client**. The addon refuses to trade to any other target and checks range and idle state.
+3. Park **each participating character** within range of the correct ???. No manual target selection is required. The addon resolves the nearby ??? directly and refuses an ambiguous location with multiple ??? entities in range.
 4. On the leader only: `//znmh start chigre`. The leader queries clients, chooses one holder, asks it to trade its item, waits until the named NM appears and then disappears, checks for unresolved trophy in treasure pool, and (after 12 seconds) selects another holder.
 5. `//znmh status`; `//znmh stop` at any time.
 
@@ -48,7 +48,7 @@ For Tyger, choose one Mythic recipient before each kill, or stop the queue betwe
 
 ## Limitations / safety
 
-- Only target an appropriate, nearby `???`. This is required because multiple unrelated `???` may exist nearby.
+- The addon trades to the only nearby `???` without selecting it. If multiple `???` entities are in range, it refuses to trade until the location is unambiguous.
 - No movement or pathfinding, no purchasing or retrieving pop items from bags, no NM combat logic. Use UnifiedCombat for fighting.
 - Windower treasure slots are 0–9. Trophy routing is based on matching resource item names. It intentionally leaves other loot alone.
 - The leader's NM presence check relies on local mob visibility. All clients should stay close enough to see the named monster and the leader should not zone mid-run.
