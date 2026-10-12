@@ -25,7 +25,7 @@ Set on leader, and broadcast to all clients:
 //znmh recipient tinnin Niightsiide
 ```
 
-For Chigre, Verdelet, Experimental Lamia, Mahjlaef and Nuhn, the current pop *owner* is designated trophy recipient automatically. The other characters pass only the configured trophy, and the designated character lots it. One Rare/Ex trophy per owner per wave; turn it in to Sanraku before continuing a repeat wave. The addon does **not** trade trophies to Sanraku.
+For Chigre, Verdelet, Experimental Lamia, Mahjlaef and Nuhn, the current pop *owner* is designated trophy recipient automatically. The addon tracks that owner explicitly, reapplies the owner assignment to peers during readiness queries, and scans treasure slots 0–9 for automatic lot/pass. If no owner has been assigned yet, it does not pass these trophies. The other characters pass only the configured trophy, and the designated character lots it. One Rare/Ex trophy per owner per wave; turn it in to Sanraku before continuing a repeat wave. The addon does **not** trade trophies to Sanraku.
 
 For Tyger, choose one Mythic recipient before each kill, or stop the queue between recipients. **Do not spawn the three trial Tyger pops before the Magian trial is active.**
 
